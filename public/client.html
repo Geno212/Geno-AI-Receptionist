@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AI Receptionist Web Call</title>
+  <style>
+    body { font-family: system-ui, Arial; margin: 2rem; }
+    button { padding: .7rem 1.2rem; font-size: 1rem; }
+    #log { margin-top:1rem; white-space: pre-line; font-family: monospace; background:#111; color:#0f0; padding:1rem; height:200px; overflow:auto; }
+  </style>
+  <script src="https://sdk.twilio.com/js/client/v1.14/twilio.js"></script>
+</head>
+<body>
+  <h1>AI Receptionist (WebRTC)</h1>
+  <p>Status: <span id="status">idle</span></p>
+  <div>
+    <input id="identity" placeholder="identity (optional)" />
+    <button id="btnToken">Get Token</button>
+    <button id="btnCall" disabled>Call</button>
+    <button id="btnHangup" disabled>Hangup</button>
+  </div>
+  <div id="log"></div>
+<script>
+let device; let currentConn; let token;
+const logEl = document.getElementById('log');
+function log(msg){ logEl.textContent += msg + "\n"; logEl.scrollTop = logEl.scrollHeight; }
+function setStatus(s){ document.getElementById('status').textContent = s; }
+
+async function fetchToken(){
+  const id = document.getElementById('identity').value.trim();
+  const q = id ? ('?identity=' + encodeURIComponent(id)) : '';
+  const res = await fetch('/token' + q);
+  if(!res.ok){ log('Token error'); return; }
+  const data = await res.json();
+  token = data.token;
+  log('Token received for ' + data.identity);
+  setupDevice();
+}
+
+function setupDevice(){
+  device = new Twilio.Device(token, { logLevel: 'error' });
+  device.on('ready', ()=>{ log('Device ready'); document.getElementById('btnCall').disabled=false; });
+  device.on('error', e=>{ log('Error: '+e.message); });
+  device.on('incoming', conn=>{ log('Incoming call'); });
+}
+
+function startCall(){
+  if(!device) return;
+  setStatus('calling');
+  currentConn = device.connect({ }); // hits TwiML App -> /client-voice
+  currentConn.on('accept', ()=>{ setStatus('in-call'); log('Call accepted'); document.getElementById('btnHangup').disabled=false; });
+  currentConn.on('disconnect', ()=>{ setStatus('idle'); log('Call ended'); document.getElementById('btnHangup').disabled=true; });
+  currentConn.on('error', e=>{ log('Conn error '+e.message); });
+}
+function hangup(){ if(currentConn){ currentConn.disconnect(); } }
+
+document.getElementById('btnToken').onclick = fetchToken;
+ document.getElementById('btnCall').onclick = startCall;
+ document.getElementById('btnHangup').onclick = hangup;
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+node_modules/
+.env
+ai-receptionist-sa.json
+*.log
+*.tmp
+.DS_Store

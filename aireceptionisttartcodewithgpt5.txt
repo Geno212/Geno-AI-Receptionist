@@ -1,0 +1,341 @@
+// ===============================
+// server.js (single-file)
+// AI Receptionist for Egyptian restaurant – Twilio Media Streams (bidirectional)
+// Google Cloud STT (streaming) -> LLM (OpenAI-compatible) -> Google TTS (mulaw/8k)
+// DB: lightweight JSON file (menu, hours, reservations)
+// ===============================
+// Quick start:
+// 1) Create .env (see TEMPLATE below) and `npm i` with the package.json below.
+// 2) Run: node server.js
+// 3) Expose: use `npx localtunnel --port 3000` (or Cloudflare Tunnel/Ngrok) to get an https URL.
+// 4) In Twilio Console: Phone Number -> Voice -> Webhook = https://YOUR_TUNNEL/voice
+// 5) Call your Twilio number from your phone and talk in Egyptian Arabic.
+//
+// Notes:
+// - Twilio sends 8kHz μ-law audio frames over WebSocket. We transcribe via Google STT and reply via Google TTS (μ-law/8k) back to Twilio stream.
+// - LLM is optional but recommended. Any OpenAI-compatible endpoint works (Workers AI proxy, OpenRouter, your OSS 20B, etc.).
+// - The LLM is instructed to emit an optional <tool>{...}</tool> action we parse for DB ops (place/cancel). If your LLM supports JSON or tool-calling, you can adjust easily.
+
+require("dotenv").config();
+const fs = require("fs");
+const path = require("path");
+const express = require("express");
+const bodyParser = require("body-parser");
+const { xml } = require("xmlbuilder2");
+const http = require("http");
+const WebSocket = require("ws");
+
+// Google Cloud clients
+const speech = require("@google-cloud/speech");
+const textToSpeech = require("@google-cloud/text-to-speech");
+
+// ========== ENV ==========
+const PORT = process.env.PORT || 3000;
+const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`; // for Twilio <Stream> URL
+
+// Google: authenticate via env var GOOGLE_APPLICATION_CREDENTIALS pointing to JSON key file
+const GCP_PROJECT = process.env.GCP_PROJECT || "";
+
+// LLM (OpenAI-compatible)
+const LLM_BASE_URL = process.env.LLM_BASE_URL || ""; // e.g. https://api.openrouter.ai/v1
+const LLM_MODEL = process.env.LLM_MODEL || ""; // e.g. llama-3.1-8b-instruct
+const LLM_API_KEY = process.env.LLM_API_KEY || "";
+
+// Telephony
+const TWILIO_MEDIA_WS_PATH = "/ws";
+
+// ========== LIGHT DB (JSON file) ==========
+const dbPath = path.join(__dirname, "db.json");
+function seedDB() {
+  return {
+    customers: [ { id: 1, phone_e164: "+201001234567", name: "أحمد علي", notes: "", created_at: Date.now() } ],
+    reservations: [],
+    menu_items: [
+      { id: 1, name_ar: "كشري", name_en: "Koshary", description_ar: "أرز ومكرونة وعدس وبصل مقرمش", price_egp: 95, is_available: true, category: "mains" },
+      { id: 2, name_ar: "ملوخية", name_en: "Molokhia", description_ar: "شوربة ملوخية مع ثوم وكزبرة", price_egp: 85, is_available: true, category: "mains" },
+      { id: 3, name_ar: "حمص", name_en: "Hummus", description_ar: "حمص مهروس مع طحينة", price_egp: 70, is_available: true, category: "mezzes" },
+      { id: 4, name_ar: "أم علي", name_en: "Om Ali", description_ar: "حلوى باللبن والمكسرات", price_egp: 75, is_available: true, category: "desserts" },
+    ],
+    opening_hours: [
+      { id: 1, weekday: 1, open_time: "12:00", close_time: "23:00" },
+      { id: 2, weekday: 2, open_time: "12:00", close_time: "23:00" },
+      { id: 3, weekday: 3, open_time: "12:00", close_time: "23:00" },
+      { id: 4, weekday: 4, open_time: "12:00", close_time: "23:00" },
+      { id: 5, weekday: 5, open_time: "12:00", close_time: "00:00" },
+      { id: 6, weekday: 6, open_time: "12:00", close_time: "00:00" },
+      { id: 7, weekday: 7, open_time: "12:00", close_time: "23:00" },
+    ],
+    special_days: [],
+    counters: { customers: 1, reservations: 0 },
+  };
+}
+function loadDB() { if (!fs.existsSync(dbPath)) fs.writeFileSync(dbPath, JSON.stringify(seedDB(), null, 2)); return JSON.parse(fs.readFileSync(dbPath, "utf8")); }
+function saveDB(db) { fs.writeFileSync(dbPath, JSON.stringify(db, null, 2)); }
+
+function findOrCreateCustomer(db, { phone_e164, name }) {
+  let c = db.customers.find(x => x.phone_e164 === phone_e164);
+  if (!c) { db.counters.customers += 1; c = { id: db.counters.customers, phone_e164, name: name || "عميل", notes: "", created_at: Date.now() }; db.customers.push(c); }
+  return c;
+}
+function placeReservation(db, { phone_e164, name, party_size, reserved_at }) {
+  const c = findOrCreateCustomer(db, { phone_e164, name });
+  db.counters.reservations += 1;
+  const r = { id: db.counters.reservations, customer_id: c.id, party_size, reserved_at, status: "confirmed", source: "phone", created_at: Date.now() };
+  db.reservations.push(r); saveDB(db); return r;
+}
+
+// ========== LLM helper ==========
+async function callLLM(messages) {
+  if (!LLM_BASE_URL || !LLM_MODEL) return null;
+  try {
+    const res = await fetch(`${LLM_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(LLM_API_KEY ? { Authorization: `Bearer ${LLM_API_KEY}` } : {}) },
+      body: JSON.stringify({ model: LLM_MODEL, temperature: 0.3, messages })
+    });
+    if (!res.ok) throw new Error(`LLM ${res.status}`);
+    const data = await res.json();
+    return data?.choices?.[0]?.message?.content || null;
+  } catch (e) {
+    console.error("LLM error", e.message);
+    return null;
+  }
+}
+
+// ========== Google clients ==========
+const speechClient = new speech.SpeechClient();
+const ttsClient = new textToSpeech.TextToSpeechClient();
+
+// ========== Twilio Webhook (TwiML) ==========
+const app = express();
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
+
+const SYSTEM_PROMPT = `أنت موظف استقبال لمطعم في القاهرة. اتكلّم باللهجة المصرية بوضوح وهدوء.
+اختصر الردود. لو في حجز اسأل عن الاسم، رقم الموبايل، عدد الأفراد، التاريخ والساعة. راعي توقيت القاهرة.
+لو محتاج تنفّذ أكشن في النظام، اطبع في أول السطر فقط JSON بين وسوم <tool> و </tool> بالشكل:
+<tool>{"name":"place_reservation","args":{"name":"فلان","phone":"+2010...","party_size":4,"iso_datetime":"2025-08-11T20:00:00+02:00"}}</tool>
+ثم بعده رد للمكالمة باللهجة المصرية. لو مفيش أكشن سيب الوسم.
+`;
+
+app.post("/voice", (req, res) => {
+  const wsUrl = (PUBLIC_URL.replace(/^http/, "ws") + TWILIO_MEDIA_WS_PATH);
+  const twiml = xml({ version: "1.0" })
+    .ele("Response")
+      .ele("Say", { language: "ar-EG" }).txt("أهلا بيك. لحظة هنوصلك بموظف الاستقبال الذكي.").up()
+      .ele("Connect")
+        .ele("Stream", { url: wsUrl, track: "inbound_track", name: "ai-eg-reception" }).up()
+      .up()
+    .up()
+    .end({ prettyPrint: true });
+  res.set("Content-Type", "text/xml");
+  res.send(twiml);
+});
+
+app.get("/health", (req, res) => res.json({ ok: true }));
+
+const server = http.createServer(app);
+
+// ========== WebSocket (bidirectional) ==========
+const wss = new WebSocket.Server({ server, path: TWILIO_MEDIA_WS_PATH });
+
+// μ-law decode table (256 -> 16-bit linear). Credit: public domain implementation.
+const MULAW_DECODE_TABLE = (() => {
+  const MULAW_MAX = 0x1FFF; // not exact, approximated
+  const BIAS = 0x84;
+  const table = new Int16Array(256);
+  for (let i = 0; i < 256; i++) {
+    let mu = ~i & 0xff;
+    let t = ((mu & 0x0F) << 3) + BIAS;
+    t <<= ((mu & 0x70) >> 4);
+    let s = (mu & 0x80) ? (BIAS - t) : (t - BIAS);
+    table[i] = s;
+  }
+  return table;
+})();
+
+function mulawToLinear16(u8arr) {
+  const out = new Int16Array(u8arr.length);
+  for (let i = 0; i < u8arr.length; i++) out[i] = MULAW_DECODE_TABLE[u8arr[i]];
+  return out;
+}
+
+function linear16ToBase64Mulaw(int16) {
+  // naive: convert linear16 to mulaw by table search (approx). For production, use a proper μ-law encode.
+  // Here we hack by scaling down and mapping to 8-bit unsigned via companding formula.
+  const out = new Uint8Array(int16.length);
+  for (let i = 0; i < int16.length; i++) {
+    let s = int16[i];
+    let sign = (s < 0) ? 0x80 : 0;
+    if (s < 0) s = -s;
+    if (s > 32635) s = 32635;
+    s = s + 132; // BIAS
+    let exponent = 7;
+    for (let expMask = 0x4000; (s & expMask) === 0 && exponent > 0; expMask >>= 1) exponent--;
+    const mantissa = (s >> ((exponent === 0) ? 4 : (exponent + 3))) & 0x0F;
+    const mu = ~(sign | (exponent << 4) | mantissa) & 0xFF;
+    out[i] = mu;
+  }
+  return Buffer.from(out).toString("base64");
+}
+
+wss.on("connection", (ws) => {
+  console.log("WS connected");
+  const db = loadDB();
+  const convo = [ { role: "system", content: SYSTEM_PROMPT } ];
+  const caller = { phone: null };
+
+  let recognizeStream = null;
+
+  async function startSpeechStream() {
+    if (recognizeStream) return;
+    recognizeStream = speechClient
+      .streamingRecognize({
+        config: {
+          encoding: "LINEAR16",
+          sampleRateHertz: 8000,
+          languageCode: "ar-EG",
+          model: "default",
+          enableAutomaticPunctuation: true,
+        },
+        interimResults: true,
+      })
+      .on("error", (e) => { console.error("STT error", e.message); recognizeStream = null; })
+      .on("data", async (data) => {
+        const alt = data.results?.[0]?.alternatives?.[0];
+        if (!alt) return;
+        const text = alt.transcript?.trim();
+        const isFinal = data.results[0].isFinal;
+        if (!text) return;
+        console.log("STT", isFinal ? "FINAL" : "PART", text);
+        if (isFinal) {
+          convo.push({ role: "user", content: text });
+          const llm = await callLLM(convo);
+          let reply = llm || "تمام، تحت أمرك";
+
+          // Parse optional <tool>{...}</tool>
+          const m = reply.match(/<tool>([\s\S]*?)<\/tool>/);
+          if (m) {
+            try {
+              const action = JSON.parse(m[1]);
+              if (action?.name === "place_reservation") {
+                const { name, phone, party_size, iso_datetime } = action.args || {};
+                const when = Date.parse(iso_datetime);
+                const r = placeReservation(db, { phone_e164: phone || caller.phone || "+201000000000", name: name || "ضيف", party_size: Number(party_size)||2, reserved_at: when || (Date.now()+3600000) });
+                reply = reply.replace(m[0], "");
+                reply = `اتأكد الحجز. ${reply.trim()}`;
+              }
+            } catch (e) { console.warn("bad tool json"); }
+          }
+
+          convo.push({ role: "assistant", content: reply });
+          await speak(reply);
+        }
+      });
+  }
+
+  async function speak(text) {
+    try {
+      const [resp] = await ttsClient.synthesizeSpeech({
+        input: { text },
+        voice: { languageCode: "ar-XA" }, // generic Arabic; use ar-EG when available
+        audioConfig: { audioEncoding: "MULAW", sampleRateHertz: 8000 }
+      });
+      const payload = resp.audioContent.toString("base64");
+      // Split into ~320 bytes chunks for smoother playback
+      const chunkSize = 3200; // base64 bytes; tweak if needed
+      for (let i = 0; i < payload.length; i += chunkSize) {
+        const chunk = payload.slice(i, i + chunkSize);
+        ws.send(JSON.stringify({ event: "media", media: { payload: chunk } }));
+      }
+      ws.send(JSON.stringify({ event: "mark", mark: { name: "tts_done" } }));
+    } catch (e) {
+      console.error("TTS error", e.message);
+    }
+  }
+
+  ws.on("message", async (msg) => {
+    let data;
+    try { data = JSON.parse(msg.toString()); } catch { return; }
+    const event = data.event;
+
+    if (event === "start") {
+      console.log("Stream start", data.start?.streamSid);
+      caller.phone = data.start?.customParameters?.caller || null;
+      startSpeechStream();
+    }
+    else if (event === "media") {
+      // inbound μ-law base64 -> decode -> feed to Google STT
+      const b64 = data.media?.payload;
+      if (!b64 || !recognizeStream) return;
+      const mulaw = Buffer.from(b64, "base64");
+      const linear16 = mulawToLinear16(mulaw);
+      recognizeStream.write({ audio_content: Buffer.from(linear16.buffer) });
+    }
+    else if (event === "stop") {
+      console.log("Stream stop");
+      if (recognizeStream) { try { recognizeStream.end(); } catch {} recognizeStream = null; }
+      ws.close();
+    }
+  });
+
+  ws.on("close", () => {
+    if (recognizeStream) { try { recognizeStream.end(); } catch {} recognizeStream = null; }
+  });
+});
+
+server.listen(PORT, () => console.log(`AI receptionist server listening on ${PORT}. Public URL: ${PUBLIC_URL}`));
+
+// ===============================
+// package.json (put in same folder)
+// ===============================
+/*
+{
+  "name": "ai-receptionist-eg",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@google-cloud/speech": "^6.1.0",
+    "@google-cloud/text-to-speech": "^5.3.0",
+    "body-parser": "^1.20.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "ws": "^8.18.0",
+    "xmlbuilder2": "^4.1.2"
+  }
+}
+*/
+
+// ===============================
+// .env TEMPLATE (create this file)
+// ===============================
+/*
+PORT=3000
+PUBLIC_URL=https://your-tunnel-url.example
+
+# Google Cloud
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/gcp-service-account.json
+GCP_PROJECT=your-project-id
+
+# LLM (OpenAI-compatible)
+LLM_BASE_URL=https://api.openrouter.ai/v1
+LLM_MODEL=meta-llama/llama-3.1-8b-instruct
+LLM_API_KEY=sk-........
+*/
+
+// ===============================
+// Twilio number setup (console)
+// ===============================
+// - Voice -> A CALL COMES IN -> Webhook: POST https://YOUR_TUNNEL/voice
+// - This server returns TwiML that opens a bidirectional media WebSocket to `${PUBLIC_URL.replace(/^http/,'ws')}${TWILIO_MEDIA_WS_PATH}`
+
+// ===============================
+// Notes & tips
+// ===============================
+// - This is a minimal scaffold intended for testing. For production: add auth checks, Twilio signature validation, retries, logging, and health metrics.
+// - If your LLM can do JSON tools/function-calling, you can switch to that instead of <tool>{}</tool> parsing.
+// - For a stronger Egyptian TTS voice, Azure has ar-EG neural voices; swap Google TTS section accordingly if you prefer.

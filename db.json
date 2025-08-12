@@ -1,0 +1,143 @@
+{
+  "customers": [
+    {
+      "id": 1,
+      "phone_e164": "+201001234567",
+      "name": "أحمد علي",
+      "notes": "",
+      "created_at": 1723372800000
+    },
+    {
+      "id": 2,
+      "phone_e164": "+2010...",
+      "name": "أحمد",
+      "notes": "",
+      "created_at": 1754962294524
+    }
+  ],
+  "reservations": [
+    {
+      "id": 1,
+      "customer_id": 2,
+      "party_size": 1,
+      "reserved_at": 1678899600000,
+      "status": "confirmed",
+      "source": "phone",
+      "created_at": 1754962294524
+    },
+    {
+      "id": 2,
+      "customer_id": 2,
+      "party_size": 2,
+      "reserved_at": 1754935200000,
+      "status": "confirmed",
+      "source": "phone",
+      "created_at": 1754962297375
+    },
+    {
+      "id": 3,
+      "customer_id": 2,
+      "party_size": 2,
+      "reserved_at": 1691766000000,
+      "status": "confirmed",
+      "source": "phone",
+      "created_at": 1754962351538
+    },
+    {
+      "id": 4,
+      "customer_id": 2,
+      "party_size": 2,
+      "reserved_at": 1691766000000,
+      "status": "confirmed",
+      "source": "phone",
+      "created_at": 1754962381799
+    }
+  ],
+  "menu_items": [
+    {
+      "id": 1,
+      "name_ar": "كشري",
+      "name_en": "Koshary",
+      "description_ar": "أرز ومكرونة وعدس وبصل مقرمش",
+      "price_egp": 95,
+      "is_available": true,
+      "category": "mains"
+    },
+    {
+      "id": 2,
+      "name_ar": "ملوخية",
+      "name_en": "Molokhia",
+      "description_ar": "شوربة ملوخية مع ثوم وكزبرة",
+      "price_egp": 85,
+      "is_available": true,
+      "category": "mains"
+    },
+    {
+      "id": 3,
+      "name_ar": "حمص",
+      "name_en": "Hummus",
+      "description_ar": "حمص مهروس مع طحينة",
+      "price_egp": 70,
+      "is_available": true,
+      "category": "mezzes"
+    },
+    {
+      "id": 4,
+      "name_ar": "أم علي",
+      "name_en": "Om Ali",
+      "description_ar": "حلوى باللبن والمكسرات",
+      "price_egp": 75,
+      "is_available": true,
+      "category": "desserts"
+    }
+  ],
+  "opening_hours": [
+    {
+      "id": 1,
+      "weekday": 1,
+      "open_time": "12:00",
+      "close_time": "23:00"
+    },
+    {
+      "id": 2,
+      "weekday": 2,
+      "open_time": "12:00",
+      "close_time": "23:00"
+    },
+    {
+      "id": 3,
+      "weekday": 3,
+      "open_time": "12:00",
+      "close_time": "23:00"
+    },
+    {
+      "id": 4,
+      "weekday": 4,
+      "open_time": "12:00",
+      "close_time": "23:00"
+    },
+    {
+      "id": 5,
+      "weekday": 5,
+      "open_time": "12:00",
+      "close_time": "00:00"
+    },
+    {
+      "id": 6,
+      "weekday": 6,
+      "open_time": "12:00",
+      "close_time": "00:00"
+    },
+    {
+      "id": 7,
+      "weekday": 7,
+      "open_time": "12:00",
+      "close_time": "23:00"
+    }
+  ],
+  "special_days": [],
+  "counters": {
+    "customers": 2,
+    "reservations": 4
+  }
+}
