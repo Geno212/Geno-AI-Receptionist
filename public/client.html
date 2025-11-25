@@ -504,6 +504,7 @@
     let recognition;
     let isRecording = false;
     let isAiSpeaking = false;
+    let isCommitting = false;
     
     // Audio Context & PCM Player
     let audioCtx;
@@ -646,6 +647,7 @@
         addChatMessage("Browser does not support Speech Recognition", "system");
         return;
       }
+      isCommitting = false; // Reset commit flag for new turn
       recognition = new SpeechRecognition();
       recognition.lang = $('#langSelect').value || 'ar-EG';
       recognition.continuous = true;
@@ -686,7 +688,10 @@
     }
 
     function commitSpeech(text) {
+        if (isCommitting) return;
         if (!text || !text.trim()) return;
+        
+        isCommitting = true;
         clearTimeout(silenceTimer);
         addChatMessage(text, "user");
         
