@@ -436,17 +436,24 @@
     let isRecording = false;
     let isAiSpeaking = false;
     
-    // MediaSource Audio Player
-    let mediaSource;
-    let audioEl;
-    let sourceBuffer;
-    let audioQueue = [];
-    let isEOS = false;
+    // Audio Context & PCM Player
+    let audioCtx;
+    let nextStartTime = 0;
+    const SAMPLE_RATE = 24000; // Must match server output_format=pcm_24000
 
     async function startCall(){
       if(isRecording) return;
       setStatus('connecting');
       
+      // Initialize Audio Context on user gesture
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SAMPLE_RATE });
+      }
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+      nextStartTime = 0;
+
       // 1. Connect WebSocket
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       ws = new WebSocket(`${protocol}//${window.location.host}/client-ws`);
@@ -467,16 +474,35 @@
           if (!isAiSpeaking) {
             isAiSpeaking = true;
             stopSTT(); // Stop listening to avoid echo
-            initAudioPlayer();
             setVisualizerState('speaking');
             setStatus('speaking');
+            // Reset timing for new utterance
+            nextStartTime = audioCtx.currentTime + 0.1; 
           }
-          feedAudio(event.data);
+          playPCMChunk(event.data);
         } else {
           try {
             const msg = JSON.parse(event.data);
             if (msg.type === 'tts_end') {
-              finalizeAudio();
+              // We don't need to do anything special for PCM end, 
+              // just wait for the queue to finish playing?
+              // We can estimate when it finishes based on nextStartTime
+              const remaining = nextStartTime - audioCtx.currentTime;
+              if (remaining > 0) {
+                setTimeout(() => {
+                   if(isAiSpeaking) {
+                     isAiSpeaking = false;
+                     setVisualizerState('listening');
+                     setStatus('listening');
+                     startSTT();
+                   }
+                }, remaining * 1000);
+              } else {
+                 isAiSpeaking = false;
+                 setVisualizerState('listening');
+                 setStatus('listening');
+                 startSTT();
+              }
             }
           } catch(e) {}
         }
@@ -489,74 +515,39 @@
         setVisualizerState(null);
         $('#btnCall').disabled = false;
         $('#btnHangup').disabled = true;
-        if (audioEl) { audioEl.pause(); audioEl = null; }
+        if (audioCtx) audioCtx.close().then(() => audioCtx = null);
       };
     }
 
-
-    function initAudioPlayer() {
-        if (audioEl) { 
-            audioEl.pause();
-            audioEl.removeAttribute('src');
-            audioEl.load();
+    function playPCMChunk(arrayBuffer) {
+        if (!audioCtx) return;
+        
+        // Convert Int16Array (raw PCM) to Float32Array
+        const int16Data = new Int16Array(arrayBuffer);
+        const float32Data = new Float32Array(int16Data.length);
+        
+        for (let i = 0; i < int16Data.length; i++) {
+            // Normalize to [-1.0, 1.0]
+            // If value is 32768 (which is out of signed 16-bit range but possible in some encodings), clamp it? 
+            // Standard Int16 is -32768 to 32767.
+            float32Data[i] = int16Data[i] / 32768.0;
         }
-        if (mediaSource && mediaSource.readyState === 'open') {
-            try { mediaSource.endOfStream(); } catch(e){}
+
+        const buffer = audioCtx.createBuffer(1, float32Data.length, SAMPLE_RATE);
+        buffer.getChannelData(0).set(float32Data);
+
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioCtx.destination);
+
+        // Schedule playback
+        // If nextStartTime is in the past, reset it to now
+        if (nextStartTime < audioCtx.currentTime) {
+            nextStartTime = audioCtx.currentTime;
         }
         
-        mediaSource = new MediaSource();
-        audioEl = new Audio();
-        audioEl.src = URL.createObjectURL(mediaSource);
-        audioQueue = [];
-        isEOS = false;
-        sourceBuffer = null;
-        
-        mediaSource.addEventListener('sourceopen', function(e) {
-            const ms = e.target;
-            if (ms.readyState !== 'open') return;
-            if (ms.sourceBuffers.length > 0) return;
-            
-            if (MediaSource.isTypeSupported('audio/mpeg')) {
-                try {
-                    sourceBuffer = ms.addSourceBuffer('audio/mpeg');
-                    sourceBuffer.mode = 'sequence';
-                    sourceBuffer.addEventListener('updateend', pushNextChunk);
-                } catch (err) {
-                    console.error('Audio Error: ' + err.message);
-                }
-            }
-        });
-        
-        audioEl.onended = () => {
-            isAiSpeaking = false;
-            setVisualizerState('listening'); // Back to listening
-            setStatus('listening');
-            startSTT(); // Resume listening
-        };
-        
-        audioEl.play().catch(e => console.log("Tap page to enable audio"));
-    }
-
-    function feedAudio(chunk) {
-        audioQueue.push(chunk);
-        pushNextChunk();
-    }
-
-    function pushNextChunk() {
-        if (!sourceBuffer || sourceBuffer.updating) return;
-        
-        if (audioQueue.length > 0) {
-            try {
-                sourceBuffer.appendBuffer(audioQueue.shift());
-            } catch (e) { console.error("Buffer append error", e); }
-        } else if (isEOS && mediaSource.readyState === 'open') {
-            mediaSource.endOfStream();
-        }
-    }
-    
-    function finalizeAudio() {
-        isEOS = true;
-        pushNextChunk();
+        source.start(nextStartTime);
+        nextStartTime += buffer.duration;
     }
 
     let silenceTimer;
