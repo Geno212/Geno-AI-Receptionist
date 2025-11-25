@@ -210,6 +210,7 @@
       flex-direction: column;
       gap: 16px;
       scroll-behavior: smooth;
+      min-height: 0; /* Critical for flex child scrolling */
       /* Mask to fade out top */
       mask-image: linear-gradient(to bottom, transparent, black 20px);
       -webkit-mask-image: linear-gradient(to bottom, transparent, black 20px);
@@ -341,6 +342,9 @@
         flex: 1; /* Take remaining height */
         border-left: none;
         background: transparent;
+        overflow: hidden; /* Ensure it doesn't grow beyond viewport */
+        display: flex;
+        flex-direction: column;
       }
 
       .ai-core-container {
@@ -666,7 +670,14 @@
 
         const source = audioCtx.createBufferSource();
         source.buffer = buffer;
-        source.connect(audioCtx.destination);
+
+        // Create a GainNode to boost volume (helpful for mobile devices)
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.value = 2.5; // Boost volume by 2.5x
+
+        // Connect: Source -> Gain -> Destination
+        source.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
 
         // Schedule playback
         if (nextStartTime < audioCtx.currentTime) {

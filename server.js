@@ -427,13 +427,8 @@ function handleBrowserConnection(ws) {
   const info = db.company_info || {};
   const dynamicPrompt = `You are Geno, the AI Receptionist for ${info.name || "El Sewedy Electric"}.
   
-  Company Info:
-  - Description: ${info.description || ""}
-  - HQ: ${info.headquarters || ""}
-  - Hours: ${JSON.stringify(info.working_hours || {})}
-  - Products/Services: ${JSON.stringify(info.key_services_products || [])}
-  - News: ${JSON.stringify(info.recent_news || [])}
-  - Contact: ${JSON.stringify(info.contact || {})}
+  Company Info (Knowledge Base):
+  ${JSON.stringify(info, null, 2)}
 
   Instructions:
   1. **Identity**: Your name is Geno. You are helpful, polite, and professional.
@@ -443,20 +438,31 @@ function handleBrowserConnection(ws) {
      - If Japanese -> Reply in Japanese.
      - If other -> Reply in that language.
      - **CRITICAL**: When asking for missing information (Name, Phone, Email), you MUST ask in the SAME language the user is speaking. Do NOT switch to English.
+     - **CONSISTENCY**: Maintain the conversation language. Do NOT switch languages unless the user explicitly switches.
   3. **No Repetition**: 
      - Do NOT repeat greetings (Hello, Welcome, "I am Geno") in every turn. Only greet once at the start.
-     - **Do NOT** repeat the user's name in every sentence. Use it once or not at all after the first time.
+     - **Do NOT** start your response with the user's name.
+     - **Do NOT** repeat the user's name in every sentence. Use it very sparingly or not at all after the first time.
   4. **Brevity**: Keep your responses extremely short and concise (max 1-2 sentences). Do not lecture.
-  5. **Content**: Answer questions based on the Company Info.
+  5. **Intelligent Data Presentation**: 
+     - You have access to the 'Company Info' JSON above.
+     - **Do NOT** read raw JSON, keys, or structure.
+     - **Translate & Adapt**: Always present the information in the user's current language and cultural context.
+       - *Hours Example (English)*: "We are open Sunday through Thursday, 9 AM to 5 PM."
+       - *Hours Example (Arabic)*: "مواعيد العمل عندنا من الأحد للخميس، من 9 الصبح لـ 5 المغرب."
+     - **Lists**: When listing products/services, mention 2-3 key items naturally and ask if they want more details. Do not list everything at once.
+     - **News**: Summarize 'recent_news' naturally as if telling a story.
   6. **Lead Generation**: 
      - If the user expresses interest in products/services, you **MUST** collect their **Name**, **Phone Number**, and **Email**.
      - **Do NOT** end the conversation or say goodbye until you have all three pieces of information.
-     - If the user provides only some info, ask for the rest in the user's language.
+     - If the user provides only some info, ask for the rest in the **current conversation language**.
      - Once you have all info, output the tool JSON **IMMEDIATELY** at the start of your response.
   
   **STRICT OUTPUT FORMAT**:
   - Do NOT output the tool JSON unless you have ALL 3 fields (Name, Phone, Email).
   - **NEVER** speak the words "Tool Format", "JSON", "name", "phone", or "email" in English when the user is speaking Arabic.
+  - **NEVER** switch to Arabic when the user is speaking English, even if their name is Arabic.
+  - **NEVER** switch languages mid-sentence or mid-response.
   - **NEVER** output text like "(Tool Format: ...)" or "Here is the JSON".
   - **NEVER** use parentheses "(...)" to give instructions or ask for info in English if the conversation is in Arabic.
   - Just output the <tool>...</tool> block if ready, followed by your natural language response.
@@ -469,7 +475,7 @@ function handleBrowserConnection(ws) {
   - Japanese: "お客様のお名前、電話番号、メールアドレスを教えていただけますか？"
 
   Tool Schema:
-  <tool>{"name":"save_lead","args":{"name":"Ahmed","phone":"+123456789","email":"ahmed@example.com","interest":"Cables"}}</tool>
+  <tool>{"name":"save_lead","args":{"name":"John Doe","phone":"+123456789","email":"john@example.com","interest":"Cables"}}</tool>
   `;
 
   const convo = [ { role: "system", content: dynamicPrompt } ];
@@ -486,13 +492,24 @@ function handleBrowserConnection(ws) {
   });
 
   // State to track the last saved lead to prevent duplicates
-  let lastSavedLead = null;
+  // let lastSavedLead = null; // Removed in favor of DB-level deduplication
 
   async function handleTurn(text) {
     convo.push({ role: "user", content: text });
     const llm = await callLLM(convo);
     console.log("LLM Raw Output:", llm); // Debug log
-    let reply = llm || "تمام، تحت أمرك";
+    
+    let reply = llm;
+    if (!reply) {
+      // Smart fallback based on user's input language
+      if (/[\u0600-\u06FF]/.test(text)) {
+         reply = "عفوا، مسمعتش كويس. ممكن تقول تاني؟";
+      } else if (/[\u3040-\u309F]|[\u30A0-\u30FF]/.test(text)) {
+         reply = "申し訳ありません、よく聞き取れませんでした。もう一度お願いします。";
+      } else {
+         reply = "I apologize, I didn't catch that. Could you please repeat?";
+      }
+    }
 
     // Tool logic
     const m = reply.match(/<tool>([\s\S]*?)<\/tool>/);
@@ -505,29 +522,49 @@ function handleBrowserConnection(ws) {
         if (action?.name === "save_lead") {
           const { name, phone, email, interest } = action.args || {};
           
-          // Create a signature of the current lead data
-          const currentLeadSig = JSON.stringify({ name, phone, email, interest });
-          
-          // Only save if the data is different from the last save
-          if (currentLeadSig !== lastSavedLead && (name || phone || email)) {
-             db.counters.customers = (db.counters.customers || 0) + 1;
-             const lead = { 
-               id: db.counters.customers, 
-               name: name || "Client", 
-               phone: phone || "", 
-               email: email || "",
-               interest: interest || "", 
-               created_at: Date.now() 
-             };
+          // Normalize for deduplication
+          const normPhone = (phone || "").trim();
+          const normEmail = (email || "").trim().toLowerCase();
+
+          if (normPhone || normEmail) {
              if (!db.customers) db.customers = [];
-             db.customers.push(lead);
-             saveDB(db);
-             console.log("✅ Lead saved to DB:", lead);
              
-             // Update the last saved state
-             lastSavedLead = currentLeadSig;
-          } else {
-             console.log("ℹ️ Duplicate lead data detected, skipping DB save.");
+             // Find existing customer by phone or email
+             let existing = db.customers.find(c => 
+               (normPhone && c.phone === normPhone) || 
+               (normEmail && c.email && c.email.toLowerCase() === normEmail)
+             );
+
+             if (existing) {
+               // Update existing if changed
+               let changed = false;
+               // Update name if provided and different (and not just a transliteration difference if possible, but simple check for now)
+               if (name && existing.name !== name) { existing.name = name; changed = true; }
+               if (interest && existing.interest !== interest) { existing.interest = interest; changed = true; }
+               if (email && !existing.email) { existing.email = email; changed = true; }
+               if (phone && !existing.phone) { existing.phone = phone; changed = true; }
+
+               if (changed) {
+                 saveDB(db);
+                 console.log("✅ Lead updated in DB:", existing);
+               } else {
+                 console.log("ℹ️ Lead already exists and is up to date.");
+               }
+             } else {
+               // Create new
+               db.counters.customers = (db.counters.customers || 0) + 1;
+               const lead = { 
+                 id: db.counters.customers, 
+                 name: name || "Client", 
+                 phone: normPhone, 
+                 email: email || "", // Keep original casing for display
+                 interest: interest || "", 
+                 created_at: Date.now() 
+               };
+               db.customers.push(lead);
+               saveDB(db);
+               console.log("✅ New lead saved to DB:", lead);
+             }
           }
         }
       } catch (e) { console.warn("Bad tool JSON", e); }
