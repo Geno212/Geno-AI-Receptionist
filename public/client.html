@@ -595,19 +595,6 @@
     function playPCMChunk(arrayBuffer) {
         if (!audioCtx) return;
         
-        // Check for MP3 header (ID3 or Sync Word) to warn user
-        const headerView = new Uint8Array(arrayBuffer.slice(0, 4));
-        if (headerView[0] === 0xFF && (headerView[1] & 0xE0) === 0xE0) {
-             console.error("Received MP3 data instead of PCM. Server restart required.");
-             addChatMessage("Error: Server sending MP3. Please restart server.", "system");
-             return;
-        }
-        if (headerView[0] === 0x49 && headerView[1] === 0x44 && headerView[2] === 0x33) { // ID3
-             console.error("Received MP3 ID3 tag. Server restart required.");
-             addChatMessage("Error: Server sending MP3. Please restart server.", "system");
-             return;
-        }
-
         // Append new data to queue
         const newChunk = new Uint8Array(arrayBuffer);
         const combined = new Uint8Array(pcmBufferQueue.length + newChunk.length);
