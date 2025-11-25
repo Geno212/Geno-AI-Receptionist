@@ -508,7 +508,7 @@
     // Audio Context & PCM Player
     let audioCtx;
     let nextStartTime = 0;
-    const SAMPLE_RATE = 44100; // Must match server output_format=pcm_44100
+    const SAMPLE_RATE = 24000; // Must match server output_format=pcm_24000
     let pcmBufferQueue = new Uint8Array(0); // Buffer for split frames
 
     async function startCall(){
