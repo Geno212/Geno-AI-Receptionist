@@ -2,7 +2,7 @@
 <html lang="en" dir="ltr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>El Sewedy Electric — AI Receptionist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,7 +20,7 @@
       --glow-color: var(--brand-red);
     }
 
-    * { box-sizing: border-box; outline: none; }
+    * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
     
     body {
       margin: 0;
@@ -37,14 +37,16 @@
       flex-direction: column;
     }
 
-    /* --- Header & Branding --- */
+    /* --- Header --- */
     .header {
-      padding: 16px 24px;
+      height: 70px;
+      padding: 0 24px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       z-index: 10;
-      flex-shrink: 0; /* Prevent header from shrinking */
+      flex-shrink: 0;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
     }
 
     .brand {
@@ -54,7 +56,7 @@
     }
 
     .brand img {
-      height: 40px;
+      height: 36px;
       width: auto;
       filter: drop-shadow(0 0 10px rgba(227, 30, 36, 0.3));
     }
@@ -62,7 +64,7 @@
     .brand-text {
       font-family: 'Cairo', sans-serif;
       font-weight: 800;
-      font-size: 24px;
+      font-size: 22px;
       line-height: 1;
       letter-spacing: -0.02em;
       text-transform: uppercase;
@@ -88,16 +90,37 @@
     }
     .lang-btn:hover { background: rgba(255,255,255,0.1); }
 
-    /* --- Main Interface --- */
-    .main-stage {
+    /* --- Main Layout --- */
+    .main-container {
+      flex: 1;
+      display: flex;
+      overflow: hidden; /* Important for internal scrolling */
+      position: relative;
+      width: 100%;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    /* Left Side: Visualizer */
+    .visualizer-section {
       flex: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       position: relative;
-      overflow: hidden; /* Contain children */
-      width: 100%;
+      padding: 20px;
+    }
+
+    /* Right Side: Chat & Controls */
+    .interaction-section {
+      width: 400px;
+      display: flex;
+      flex-direction: column;
+      background: rgba(0, 0, 0, 0.2);
+      border-left: 1px solid var(--glass-border);
+      backdrop-filter: blur(10px);
+      z-index: 5;
     }
 
     /* --- AI Core Visualizer --- */
@@ -108,7 +131,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-bottom: 20px;
+      margin-bottom: 40px;
       flex-shrink: 0;
     }
 
@@ -160,50 +183,103 @@
     /* --- Status Text --- */
     .status-display {
       text-align: center;
-      margin-bottom: 20px;
-      height: 50px;
+      height: 60px;
       flex-shrink: 0;
     }
     .status-title {
-      font-size: 20px;
+      font-size: 24px;
       font-weight: 300;
       letter-spacing: 1px;
-      margin: 0 0 4px 0;
+      margin: 0 0 8px 0;
       opacity: 0.9;
     }
     .status-sub {
-      font-size: 12px;
+      font-size: 13px;
       color: var(--text-muted);
       text-transform: uppercase;
-      letter-spacing: 2px;
+      letter-spacing: 3px;
+      font-weight: 600;
     }
 
-    /* --- Controls --- */
-    .control-bar {
+    /* --- Chat Area --- */
+    .chat-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
       display: flex;
+      flex-direction: column;
       gap: 16px;
-      background: var(--bg-panel);
-      padding: 10px;
-      border-radius: 20px;
+      scroll-behavior: smooth;
+      /* Mask to fade out top */
+      mask-image: linear-gradient(to bottom, transparent, black 20px);
+      -webkit-mask-image: linear-gradient(to bottom, transparent, black 20px);
+    }
+
+    .msg {
+      padding: 12px 16px;
+      border-radius: 16px;
+      font-size: 14px;
+      line-height: 1.5;
+      max-width: 85%;
+      animation: fade-in 0.3s ease forwards;
+      position: relative;
+    }
+    
+    .msg.user {
+      align-self: flex-end;
+      background: rgba(255, 255, 255, 0.08);
       border: 1px solid var(--glass-border);
-      backdrop-filter: blur(20px);
-      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
-      z-index: 10;
-      margin-bottom: 40px; /* Default desktop margin */
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    
+    .msg.ai {
+      align-self: flex-start;
+      background: rgba(227, 30, 36, 0.15);
+      border: 1px solid rgba(227, 30, 36, 0.3);
+      color: #fff;
+      border-bottom-left-radius: 4px;
+    }
+
+    .msg-time {
+      font-size: 10px;
+      opacity: 0.5;
+      margin-top: 4px;
+      display: block;
+      text-align: right;
+    }
+
+    @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* --- Controls Area --- */
+    .controls-container {
+      padding: 20px;
+      background: rgba(0,0,0,0.3);
+      border-top: 1px solid var(--glass-border);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .control-row {
+      display: flex;
+      gap: 12px;
     }
 
     .btn {
       border: none;
-      padding: 14px 28px;
-      border-radius: 14px;
-      font-size: 15px;
+      padding: 16px;
+      border-radius: 12px;
+      font-size: 16px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s ease;
       display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: center;
+      gap: 10px;
       font-family: 'Inter', sans-serif;
+      flex: 1;
     }
 
     .btn-primary {
@@ -213,148 +289,91 @@
     }
     .btn-primary:hover { background: #ff2a30; transform: translateY(-2px); }
     .btn-primary:active { transform: translateY(0); }
-    .btn-primary:disabled { background: #333; color: #666; box-shadow: none; cursor: not-allowed; }
+    .btn-primary:disabled { background: #333; color: #666; box-shadow: none; cursor: not-allowed; transform: none; }
 
     .btn-danger {
-      background: rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.05);
       color: white;
       border: 1px solid var(--glass-border);
+      flex: 0 0 60px; /* Square-ish */
     }
-    .btn-danger:hover { background: rgba(255, 255, 255, 0.2); }
+    .btn-danger:hover { background: rgba(255, 255, 255, 0.15); color: var(--brand-red); }
     .btn-danger:disabled { opacity: 0.3; cursor: not-allowed; }
 
     .lang-select {
-      background: transparent;
-      color: white;
-      border: none;
-      font-size: 15px;
-      padding: 0 12px;
+      background: rgba(0,0,0,0.3);
+      color: var(--text-muted);
+      border: 1px solid var(--glass-border);
+      font-size: 14px;
+      padding: 12px;
+      border-radius: 12px;
       cursor: pointer;
       font-family: 'Inter', sans-serif;
+      width: 100%;
+      appearance: none;
+      text-align: center;
     }
-    .lang-select option { background: #111; }
-
-    /* --- Chat Log (Overlay) --- */
-    .chat-log {
-      position: absolute;
-      right: 40px;
-      top: 100px;
-      bottom: 100px;
-      width: 320px;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      padding-right: 8px;
-      mask-image: linear-gradient(to bottom, transparent, black 5%, black 95%, transparent);
-      -webkit-mask-image: linear-gradient(to bottom, transparent, black 5%, black 95%, transparent);
-    }
-    
-    .msg {
-      padding: 10px 14px;
-      border-radius: 10px;
-      font-size: 13px;
-      line-height: 1.4;
-      max-width: 90%;
-      animation: fade-in 0.3s ease forwards;
-    }
-    .msg.user {
-      align-self: flex-end;
-      background: rgba(255, 255, 255, 0.1);
-      border: 1px solid var(--glass-border);
-      color: var(--text-muted);
-      border-bottom-right-radius: 2px;
-    }
-    .msg.ai {
-      align-self: flex-start;
-      background: rgba(227, 30, 36, 0.1);
-      border: 1px solid rgba(227, 30, 36, 0.3);
-      color: var(--text-main);
-      border-bottom-left-radius: 2px;
-    }
-    
-    @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .lang-select:hover { border-color: rgba(255,255,255,0.2); color: #fff; }
+    .lang-select option { background: #111; text-align: left; }
 
     /* Scrollbar */
-    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
-    /* Responsive */
+    /* --- Responsive Design --- */
     @media (max-width: 900px) {
-      .chat-log {
-        position: relative;
+      .main-container {
+        flex-direction: column;
+      }
+      
+      .visualizer-section {
+        flex: 0 0 auto; /* Don't grow, take content size */
+        height: 40vh; /* Fixed height for visualizer on mobile */
+        min-height: 250px;
+        border-bottom: 1px solid var(--glass-border);
+        padding: 10px;
+      }
+
+      .interaction-section {
         width: 100%;
-        height: auto;
-        flex: 1;
-        top: auto; bottom: auto;
-        right: auto;
-        mask-image: none; -webkit-mask-image: none;
-        margin-top: 10px;
-        padding: 0 20px;
+        flex: 1; /* Take remaining height */
+        border-left: none;
+        background: transparent;
+      }
+
+      .ai-core-container {
+        width: 180px; height: 180px;
         margin-bottom: 20px;
       }
-      .header { padding: 16px; }
-      .brand-text { font-size: 20px; }
-      .ai-core-container { width: 220px; height: 220px; margin-bottom: 10px; }
-      .ai-core { width: 80px; height: 80px; }
-      .ring-1 { width: 120px; height: 120px; }
-      .ring-2 { width: 160px; height: 160px; }
-      .ring-3 { width: 200px; height: 200px; }
+      .ai-core { width: 70px; height: 70px; }
+      .ring-1 { width: 110px; height: 110px; }
+      .ring-2 { width: 150px; height: 150px; }
+      .ring-3 { width: 190px; height: 190px; }
+
+      .status-title { font-size: 20px; }
+      .status-sub { font-size: 11px; }
+
+      .chat-container {
+        padding: 16px;
+        mask-image: none; -webkit-mask-image: none; /* Remove mask on mobile for clarity */
+      }
       
-      .control-bar { margin-bottom: 20px; }
+      .controls-container {
+        padding: 16px;
+        background: rgba(10, 10, 10, 0.95); /* Solid background for controls */
+        padding-bottom: max(16px, env(safe-area-inset-bottom));
+      }
     }
 
-    @media (max-width: 600px) {
-      .header { padding: 12px 16px; }
-      .brand img { height: 32px; }
+    @media (max-width: 400px) {
+      .header { height: 60px; padding: 0 16px; }
       .brand-text { font-size: 18px; }
+      .brand img { height: 28px; }
       
-      .main-stage { 
-        justify-content: flex-start; 
-        padding-top: 20px; 
-        padding-bottom: 100px; /* Space for fixed control bar */
-        overflow-y: auto; /* Allow scrolling if content is tall */
-      }
-      
-      .ai-core-container { 
-        width: 180px; height: 180px; 
-        margin-bottom: 10px; 
-        flex-shrink: 0; 
-      }
-      .ai-core { width: 60px; height: 60px; }
-      .ring-1 { width: 100px; height: 100px; }
-      .ring-2 { width: 130px; height: 130px; }
-      .ring-3 { width: 160px; height: 160px; }
-
-      .control-bar {
-        position: fixed;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        width: calc(100% - 32px); /* Full width minus padding */
-        max-width: 400px;
-        justify-content: space-between;
-        padding: 8px 12px;
-        gap: 8px;
-        margin-bottom: 0;
-        background: rgba(20, 20, 20, 0.85); /* More opaque for readability */
-      }
-      
-      .btn { padding: 10px 16px; font-size: 13px; }
-      .lang-select { width: auto; font-size: 13px; padding: 0 4px; }
-      
-      .chat-log {
-        height: auto;
-        flex: none; /* Don't flex, just take content height */
-        width: 100%;
-        margin-bottom: 0;
-        padding-bottom: 20px;
-      }
-      
-      .status-display { margin-bottom: 10px; height: auto; }
-      .status-title { font-size: 18px; }
-      .status-sub { font-size: 11px; }
+      .visualizer-section { height: 35vh; }
+      .ai-core-container { transform: scale(0.8); margin-bottom: 10px; }
     }
   </style>
 </head>
@@ -370,43 +389,55 @@
     </div>
   </header>
 
-  <main class="main-stage">
+  <main class="main-container">
     
-    <div class="ai-core-container" id="aiContainer">
-      <div class="ai-ring ring-3"></div>
-      <div class="ai-ring ring-2"></div>
-      <div class="ai-ring ring-1"></div>
-      <div class="ai-core"></div>
-    </div>
+    <!-- Left/Top: Visualizer -->
+    <section class="visualizer-section">
+      <div class="ai-core-container" id="aiContainer">
+        <div class="ai-ring ring-3"></div>
+        <div class="ai-ring ring-2"></div>
+        <div class="ai-ring ring-1"></div>
+        <div class="ai-core"></div>
+      </div>
 
-    <div class="status-display">
-      <h2 class="status-title" id="ui-title">AI Receptionist</h2>
-      <div class="status-sub" id="status">READY TO CONNECT</div>
-    </div>
+      <div class="status-display">
+        <h2 class="status-title" id="ui-title">AI Receptionist</h2>
+        <div class="status-sub" id="status">READY TO CONNECT</div>
+      </div>
+    </section>
 
-    <div class="control-bar">
-      <select id="langSelect" class="lang-select">
-        <option value="ar-EG">🇪🇬 Arabic</option>
-        <option value="en-US">🇺🇸 English</option>
-        <option value="fr-FR">🇫🇷 French</option>
-        <option value="de-DE">🇩🇪 German</option>
-        <option value="es-ES">🇪🇸 Spanish</option>
-        <option value="it-IT">🇮🇹 Italian</option>
-        <option value="ja-JP">🇯🇵 Japanese</option>
-      </select>
-      
-      <button id="btnCall" class="btn btn-primary">
-        <span class="icon">📞</span> <span id="btnCallText">Start Call</span>
-      </button>
-      
-      <button id="btnHangup" class="btn btn-danger" disabled>
-        <span class="icon">✕</span>
-      </button>
-    </div>
+    <!-- Right/Bottom: Chat & Controls -->
+    <section class="interaction-section">
+      <div class="chat-container" id="chatLog">
+        <!-- Messages will appear here -->
+        <div class="msg ai">
+          Hello! I am the AI Receptionist. How can I help you today?
+          <span class="msg-time">Now</span>
+        </div>
+      </div>
 
-    <div class="chat-log" id="chatLog">
-      <!-- Messages will appear here -->
-    </div>
+      <div class="controls-container">
+        <select id="langSelect" class="lang-select">
+          <option value="ar-EG">🇪🇬 Arabic (العربية)</option>
+          <option value="en-US" selected>🇺🇸 English (US)</option>
+          <option value="fr-FR">🇫🇷 French (Français)</option>
+          <option value="de-DE">🇩🇪 German (Deutsch)</option>
+          <option value="es-ES">🇪🇸 Spanish (Español)</option>
+          <option value="it-IT">🇮🇹 Italian (Italiano)</option>
+          <option value="ja-JP">🇯🇵 Japanese (日本語)</option>
+        </select>
+        
+        <div class="control-row">
+          <button id="btnCall" class="btn btn-primary">
+            <span class="icon">📞</span> <span id="btnCallText">Start Call</span>
+          </button>
+          
+          <button id="btnHangup" class="btn btn-danger" disabled title="End Call">
+            <span class="icon">✕</span>
+          </button>
+        </div>
+      </div>
+    </section>
 
   </main>
 
@@ -483,6 +514,13 @@
       const div = document.createElement('div');
       div.className = `msg ${type}`;
       div.textContent = text;
+      
+      const time = document.createElement('span');
+      time.className = 'msg-time';
+      const now = new Date();
+      time.textContent = now.getHours() + ':' + String(now.getMinutes()).padStart(2, '0');
+      div.appendChild(time);
+
       chatLog.appendChild(div);
       chatLog.scrollTop = chatLog.scrollHeight;
     }

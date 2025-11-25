@@ -11,8 +11,6 @@
     "body-parser": "^1.20.2",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "microsoft-cognitiveservices-speech-sdk": "^1.45.0",
-    "twilio": "^5.4.4",
     "ws": "^8.18.0",
     "xmlbuilder2": "^3.1.1"
   },

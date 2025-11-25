@@ -140,11 +140,67 @@
       "email": "ahmed@gmail.com",
       "interest": "Cables",
       "created_at": 1764088269736
+    },
+    {
+      "id": 14,
+      "name": "Ahmed",
+      "phone": "+20177552",
+      "email": "ahmed@gmail.com",
+      "interest": "Cables",
+      "created_at": 1764089816951
+    },
+    {
+      "id": 15,
+      "name": "Ahmed",
+      "phone": "+201777254",
+      "email": "ahmed@out.com",
+      "interest": "كابلات",
+      "created_at": 1764090169868
+    },
+    {
+      "id": 16,
+      "name": "Ahmed",
+      "phone": "+1707254",
+      "email": "ahmed@out.com",
+      "interest": "Cables",
+      "created_at": 1764090180964
+    },
+    {
+      "id": 17,
+      "name": "Ahmed",
+      "phone": "+201777254",
+      "email": "ahmed@outlook.com",
+      "interest": "Cables",
+      "created_at": 1764090204540
+    },
+    {
+      "id": 18,
+      "name": "Ahmed Tarek Mahmoud",
+      "phone": "+201555678",
+      "email": "",
+      "interest": "Cables",
+      "created_at": 1764091648290
+    },
+    {
+      "id": 19,
+      "name": "Ahmed Tarik Mahmoud",
+      "phone": "+201555678",
+      "email": "ahmed@outlook.com",
+      "interest": "Cables",
+      "created_at": 1764091658354
+    },
+    {
+      "id": 20,
+      "name": "Ahmed Tarik",
+      "phone": "+201555678",
+      "email": "ahmed.aljanainy@outlook.com",
+      "interest": "Cables",
+      "created_at": 1764092020289
     }
   ],
   "inquiries": [],
   "counters": {
-    "customers": 13,
+    "customers": 20,
     "inquiries": 0
   }
 }
