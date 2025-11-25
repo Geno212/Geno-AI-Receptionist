@@ -1,143 +1,150 @@
 {
+  "company_info": {
+    "name": "El Sewedy Electric",
+    "description": "A leading integrated energy solutions provider in the Middle East and Africa, operating in 5 key business sectors: Wire, Cable & Accessories, Electrical Products, Engineering & Construction, Digital Solutions, and Infrastructure Investments.",
+    "headquarters": "Cairo, Egypt",
+    "contact": {
+      "phone": "+20 2 27599700",
+      "email": "info@elsewedy.com",
+      "website": "https://www.elsewedyelectric.com",
+      "address": "Plot 27, 1st District, 5th Settlement, New Cairo, Egypt"
+    },
+    "key_services_products": [
+      "Wires, Cables & Accessories",
+      "Transformers",
+      "Meters (Iskraemeco)",
+      "Turnkey Projects (Engineering & Construction)",
+      "Wind Energy Generation",
+      "Digital Solutions",
+      "Insulators",
+      "Explosion Proof Equipment"
+    ],
+    "working_hours": {
+      "standard": "09:00 - 17:00",
+      "days": "Sunday - Thursday"
+    },
+    "recent_news": [
+      {
+        "date": "Mar 2025",
+        "title": "Partnership with IL CAZAR Developments",
+        "summary": "Strategic partnership to provide sustainable energy solutions (cables, transformers, meters) for real estate projects like Safia and The Crest."
+      },
+      {
+        "date": "Jan 2025",
+        "title": "EcoVadis Gold Medal",
+        "summary": "Subsidiary Iskraemeco awarded EcoVadis Gold Medal for sustainability excellence, placing in top 1% of industry."
+      }
+    ]
+  },
   "customers": [
     {
       "id": 1,
-      "phone_e164": "+201001234567",
-      "name": "أحمد علي",
-      "notes": "",
-      "created_at": 1723372800000
-    },
-    {
-      "id": 2,
-      "phone_e164": "+2010...",
       "name": "أحمد",
-      "notes": "",
-      "created_at": 1754962294524
-    }
-  ],
-  "reservations": [
-    {
-      "id": 1,
-      "customer_id": 2,
-      "party_size": 1,
-      "reserved_at": 1678899600000,
-      "status": "confirmed",
-      "source": "phone",
-      "created_at": 1754962294524
+      "phone": "+15567",
+      "email": "",
+      "interest": "Cables",
+      "created_at": 1764081649276
     },
     {
       "id": 2,
-      "customer_id": 2,
-      "party_size": 2,
-      "reserved_at": 1754935200000,
-      "status": "confirmed",
-      "source": "phone",
-      "created_at": 1754962297375
+      "name": "أحمد",
+      "phone": "+15567",
+      "email": "",
+      "interest": "Cables",
+      "created_at": 1764081680650
     },
     {
       "id": 3,
-      "customer_id": 2,
-      "party_size": 2,
-      "reserved_at": 1691766000000,
-      "status": "confirmed",
-      "source": "phone",
-      "created_at": 1754962351538
+      "name": "أحمد",
+      "phone": "+15567",
+      "email": "",
+      "interest": "Cables",
+      "created_at": 1764081706410
     },
     {
       "id": 4,
-      "customer_id": 2,
-      "party_size": 2,
-      "reserved_at": 1691766000000,
-      "status": "confirmed",
-      "source": "phone",
-      "created_at": 1754962381799
-    }
-  ],
-  "menu_items": [
-    {
-      "id": 1,
-      "name_ar": "كشري",
-      "name_en": "Koshary",
-      "description_ar": "أرز ومكرونة وعدس وبصل مقرمش",
-      "price_egp": 95,
-      "is_available": true,
-      "category": "mains"
-    },
-    {
-      "id": 2,
-      "name_ar": "ملوخية",
-      "name_en": "Molokhia",
-      "description_ar": "شوربة ملوخية مع ثوم وكزبرة",
-      "price_egp": 85,
-      "is_available": true,
-      "category": "mains"
-    },
-    {
-      "id": 3,
-      "name_ar": "حمص",
-      "name_en": "Hummus",
-      "description_ar": "حمص مهروس مع طحينة",
-      "price_egp": 70,
-      "is_available": true,
-      "category": "mezzes"
-    },
-    {
-      "id": 4,
-      "name_ar": "أم علي",
-      "name_en": "Om Ali",
-      "description_ar": "حلوى باللبن والمكسرات",
-      "price_egp": 75,
-      "is_available": true,
-      "category": "desserts"
-    }
-  ],
-  "opening_hours": [
-    {
-      "id": 1,
-      "weekday": 1,
-      "open_time": "12:00",
-      "close_time": "23:00"
-    },
-    {
-      "id": 2,
-      "weekday": 2,
-      "open_time": "12:00",
-      "close_time": "23:00"
-    },
-    {
-      "id": 3,
-      "weekday": 3,
-      "open_time": "12:00",
-      "close_time": "23:00"
-    },
-    {
-      "id": 4,
-      "weekday": 4,
-      "open_time": "12:00",
-      "close_time": "23:00"
+      "name": "Ahmed",
+      "phone": "+20155",
+      "email": "ahmed@ahmed.com",
+      "interest": "Cables",
+      "created_at": 1764082264051
     },
     {
       "id": 5,
-      "weekday": 5,
-      "open_time": "12:00",
-      "close_time": "00:00"
+      "name": "Ahmed",
+      "phone": "+20155",
+      "email": "ahmed.at@example.com",
+      "interest": "Cables",
+      "created_at": 1764082286823
     },
     {
       "id": 6,
-      "weekday": 6,
-      "open_time": "12:00",
-      "close_time": "00:00"
+      "name": "Ahmed",
+      "phone": "+20155",
+      "email": "ahmed2@example.com",
+      "interest": "Cables",
+      "created_at": 1764082297633
     },
     {
       "id": 7,
-      "weekday": 7,
-      "open_time": "12:00",
-      "close_time": "23:00"
+      "name": "Ahmed",
+      "phone": "+20155",
+      "email": "ahmed@gmail.com",
+      "interest": "Cables",
+      "created_at": 1764082306923
+    },
+    {
+      "id": 8,
+      "name": "Ahmed",
+      "phone": "+20155",
+      "email": "ahmed@gmail.com",
+      "interest": "Cables",
+      "created_at": 1764082345993
+    },
+    {
+      "id": 9,
+      "name": "Ahmed",
+      "phone": "+20155",
+      "email": "ahmed@gmail.com",
+      "interest": "Cables",
+      "created_at": 1764082846854
+    },
+    {
+      "id": 10,
+      "name": "Ahmed",
+      "phone": "+20122",
+      "email": "ahmed@gmail.com",
+      "interest": "Services",
+      "created_at": 1764082951379
+    },
+    {
+      "id": 11,
+      "name": "Ahmed",
+      "phone": "+20122",
+      "email": "ahmed@gmail.com",
+      "interest": "Cables",
+      "created_at": 1764082966044
+    },
+    {
+      "id": 12,
+      "name": "Ahmed",
+      "phone": "+2010556556",
+      "email": "ahmed@gmail.com",
+      "interest": "Cables",
+      "created_at": 1764083654915
+    },
+    {
+      "id": 13,
+      "name": "Ahmed",
+      "phone": "+20177",
+      "email": "ahmed@gmail.com",
+      "interest": "Cables",
+      "created_at": 1764088269736
     }
   ],
-  "special_days": [],
+  "inquiries": [],
   "counters": {
-    "customers": 2,
-    "reservations": 4
+    "customers": 13,
+    "inquiries": 0
   }
 }

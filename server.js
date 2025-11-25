@@ -14,40 +14,30 @@ const sdk = require("microsoft-cognitiveservices-speech-sdk");
 
 // ========== ENV ==========
 const PORT = process.env.PORT || 3000;
-const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`; // for Twilio <Stream> URL
+const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 
-// LLM (OpenAI-compatible)
-const LLM_BASE_URL = process.env.LLM_BASE_URL || ""; // e.g. https://api.openrouter.ai/v1
-const LLM_MODEL = process.env.LLM_MODEL || ""; // e.g. meta-llama/llama-3.1-8b-instruct
+// LLM
+const LLM_PROVIDER = process.env.LLM_PROVIDER || "openai";
+const LLM_BASE_URL = process.env.LLM_BASE_URL || "";
+const LLM_MODEL = process.env.LLM_MODEL || "";
 const LLM_API_KEY = process.env.LLM_API_KEY || "";
-const LLM_PROVIDER = process.env.LLM_PROVIDER || "openai"; // openai | cloudflare
 const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || "";
 const CF_API_TOKEN = process.env.CF_API_TOKEN || "";
-const CF_MODEL = process.env.CF_MODEL || ""; // e.g. @cf/meta/llama-3-8b-instruct
+const CF_MODEL = process.env.CF_MODEL || "@cf/meta/llama-3.1-8b-instruct";
+
+// ElevenLabs
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || "";
+const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // Default voice
 
 // Telephony
 const TWILIO_MEDIA_WS_PATH = "/ws";
-// Twilio Client (WebRTC) env
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
-const TWILIO_API_KEY_SID = process.env.TWILIO_API_KEY_SID || "";
-const TWILIO_API_KEY_SECRET = process.env.TWILIO_API_KEY_SECRET || "";
-const TWILIO_TWIML_APP_SID = process.env.TWILIO_TWIML_APP_SID || ""; // Outgoing Application SID
-const TWILIO_CLIENT_IDENTITY = process.env.TWILIO_CLIENT_IDENTITY || "demo-eg";
-// Twilio outbound call (PSTN) env
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || "";
-const TWILIO_NUMBER = process.env.TWILIO_NUMBER || ""; // Your Twilio phone number in E.164, e.g. +12025550123
+const TWILIO_NUMBER = process.env.TWILIO_NUMBER || "";
 const twilioRest = (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) : null;
 
-// Optional: Azure Neural TTS with real Egyptian voices
-const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY || "";
-const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || ""; // e.g. eastus, westeurope
-const AZURE_TTS_VOICE = process.env.AZURE_TTS_VOICE || "ar-EG-SalmaNeural"; // or ar-EG-ShakirNeural
-const AZURE_TTS_FALLBACK_VOICE = process.env.AZURE_TTS_FALLBACK_VOICE || "ar-EG-SalmaNeural";
-const AZURE_TTS_STYLE = process.env.AZURE_TTS_STYLE || ""; // e.g. 'calm', 'chat', 'customerservice'
-const AZURE_TTS_RATE = process.env.AZURE_TTS_RATE || ""; // e.g. '+0%','-10%','+10%'
-const AZURE_TTS_PITCH = process.env.AZURE_TTS_PITCH || ""; // e.g. '+0Hz','-2st'
-const GREETING_ON_START = (process.env.GREETING_ON_START ?? "1") === "1"; // speak short greeting when stream starts
-const GREETING_TEXT = process.env.GREETING_TEXT || "مساء الخير، موظف الاستقبال الذكي معك. ممكن أعرف اسم حضرتك؟";
+const GREETING_ON_START = (process.env.GREETING_ON_START ?? "1") === "1";
+const GREETING_TEXT = process.env.GREETING_TEXT || "أهلاً بك في السويدي إليكتريك. أنا جينو. Welcome to El Sewedy Electric. I am Geno. How can I help you?";
 
 // ========== LIGHT DB (JSON file) ==========
 const dbPath = path.join(__dirname, "db.json");
@@ -133,12 +123,11 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-const SYSTEM_PROMPT = `أنت موظف استقبال لمطعم في القاهرة.
-تكلّم بلهجة مصرية خفيفة وواضحة ومفهومة للجميع، وابتعد عن الألفاظ الشعبية الثقيلة. عند الشك استخدم فصحى مبسّطة.
-اختصر الردود. لو في حجز اسأل عن الاسم، رقم الموبايل، عدد الأفراد، التاريخ والساعة. راعي توقيت القاهرة.
-لو محتاج تنفّذ أكشن في النظام، اطبع في أول السطر فقط JSON بين وسوم <tool> و </tool> بالشكل:
-<tool>{"name":"place_reservation","args":{"name":"فلان","phone":"+2010...","party_size":4,"iso_datetime":"2025-08-11T20:00:00+02:00"}}</tool>
-ثم بعده رد للمكالمة باللهجة المصرية الخفيفة. لو مفيش أكشن سيب الوسم.`;
+const SYSTEM_PROMPT = `أنت موظف استقبال لشركة السويدي إليكتريك.
+تكلّم بلهجة مصرية مهذبة واحترافية.
+جاوب على الأسئلة عن المنتجات والخدمات (كابلات، محولات، عدادات، مشاريع).
+لا تكرر الترحيب في كل رد.
+`;
 
 app.post("/voice", (req, res) => {
   const wsUrl = (PUBLIC_URL.replace(/^http/, "ws") + TWILIO_MEDIA_WS_PATH);
@@ -370,7 +359,8 @@ app.post("/call", async (req, res) => {
 const server = http.createServer(app);
 
 // ========== WebSocket (bidirectional) ==========
-const wss = new WebSocket.Server({ server, path: TWILIO_MEDIA_WS_PATH });
+// Handle both Twilio (/ws) and Browser (/client-ws)
+const wss = new WebSocket.Server({ server });
 
 // μ-law decode table
 const MULAW_DECODE_TABLE = (() => {
@@ -392,8 +382,185 @@ function mulawToLinear16(u8arr) {
   return out;
 }
 
-wss.on("connection", (ws) => {
-  console.log("WS connected");
+wss.on("connection", (ws, req) => {
+  const url = req.url;
+  console.log(`WS connected on ${url}`);
+
+  if (url === "/client-ws") {
+    handleBrowserConnection(ws);
+  } else if (url === TWILIO_MEDIA_WS_PATH) {
+    handleTwilioConnection(ws);
+  } else {
+    ws.close();
+  }
+});
+
+function handleBrowserConnection(ws) {
+  const db = loadDB();
+  
+  const info = db.company_info || {};
+  const dynamicPrompt = `You are Geno, the AI Receptionist for ${info.name || "El Sewedy Electric"}.
+  
+  Company Info:
+  - Description: ${info.description || ""}
+  - HQ: ${info.headquarters || ""}
+  - Hours: ${JSON.stringify(info.working_hours || {})}
+  - Products/Services: ${JSON.stringify(info.key_services_products || [])}
+  - News: ${JSON.stringify(info.recent_news || [])}
+  - Contact: ${JSON.stringify(info.contact || {})}
+
+  Instructions:
+  1. **Identity**: Your name is Geno. You are helpful, polite, and professional.
+  2. **Language Detection**: Listen to the user. 
+     - If English -> Reply in English.
+     - If Arabic -> Reply in Egyptian Arabic.
+     - If Japanese -> Reply in Japanese.
+     - If other -> Reply in that language.
+     - **CRITICAL**: When asking for missing information (Name, Phone, Email), you MUST ask in the SAME language the user is speaking. Do NOT switch to English.
+  3. **No Repetition**: 
+     - Do NOT repeat greetings (Hello, Welcome, "I am Geno") in every turn. Only greet once at the start.
+     - **Do NOT** repeat the user's name in every sentence. Use it once or not at all after the first time.
+  4. **Brevity**: Keep your responses extremely short and concise (max 1-2 sentences). Do not lecture.
+  5. **Content**: Answer questions based on the Company Info.
+  6. **Lead Generation**: 
+     - If the user expresses interest in products/services, you **MUST** collect their **Name**, **Phone Number**, and **Email**.
+     - **Do NOT** end the conversation or say goodbye until you have all three pieces of information.
+     - If the user provides only some info, ask for the rest in the user's language.
+     - Once you have all info, output the tool JSON **IMMEDIATELY** at the start of your response.
+  
+  **STRICT OUTPUT FORMAT**:
+  - Do NOT output the tool JSON unless you have ALL 3 fields (Name, Phone, Email).
+  - **NEVER** speak the words "Tool Format", "JSON", "name", "phone", or "email" in English when the user is speaking Arabic.
+  - **NEVER** output text like "(Tool Format: ...)" or "Here is the JSON".
+  - **NEVER** use parentheses "(...)" to give instructions or ask for info in English if the conversation is in Arabic.
+  - Just output the <tool>...</tool> block if ready, followed by your natural language response.
+  - **DATA FORMAT**: When saving the lead, **ALWAYS** transliterate Arabic names to English (e.g., "Ahmed" instead of "أحمد") and ensure the email is in valid format.
+  - **ONE-TIME SAVE**: Only output the <tool> block ONCE when you first collect the full info. Do NOT output it again in subsequent turns unless the user explicitly changes their information.
+
+  **EXAMPLES OF ASKING FOR INFO**:
+  - English: "Could I please have your name, phone number, and email to assist you further?"
+  - Arabic: "ممكن الاسم ورقم التليفون والإيميل عشان أقدر أساعدك؟"
+  - Japanese: "お客様のお名前、電話番号、メールアドレスを教えていただけますか？"
+
+  Tool Schema:
+  <tool>{"name":"save_lead","args":{"name":"Ahmed","phone":"+123456789","email":"ahmed@example.com","interest":"Cables"}}</tool>
+  `;
+
+  const convo = [ { role: "system", content: dynamicPrompt } ];
+
+  // Handle text messages from browser (STT done in browser)
+  ws.on("message", async (msg) => {
+    try {
+      const data = JSON.parse(msg.toString());
+      if (data.type === "text" && data.text) {
+        console.log("Browser STT:", data.text);
+        await handleTurn(data.text);
+      }
+    } catch (e) {}
+  });
+
+  // State to track the last saved lead to prevent duplicates
+  let lastSavedLead = null;
+
+  async function handleTurn(text) {
+    convo.push({ role: "user", content: text });
+    const llm = await callLLM(convo);
+    console.log("LLM Raw Output:", llm); // Debug log
+    let reply = llm || "تمام، تحت أمرك";
+
+    // Tool logic
+    const m = reply.match(/<tool>([\s\S]*?)<\/tool>/);
+    if (m) {
+      // Always remove the tool tag from the spoken reply, even if parsing fails
+      reply = reply.replace(m[0], "").trim();
+      
+      try {
+        const action = JSON.parse(m[1]);
+        if (action?.name === "save_lead") {
+          const { name, phone, email, interest } = action.args || {};
+          
+          // Create a signature of the current lead data
+          const currentLeadSig = JSON.stringify({ name, phone, email, interest });
+          
+          // Only save if the data is different from the last save
+          if (currentLeadSig !== lastSavedLead && (name || phone || email)) {
+             db.counters.customers = (db.counters.customers || 0) + 1;
+             const lead = { 
+               id: db.counters.customers, 
+               name: name || "Client", 
+               phone: phone || "", 
+               email: email || "",
+               interest: interest || "", 
+               created_at: Date.now() 
+             };
+             if (!db.customers) db.customers = [];
+             db.customers.push(lead);
+             saveDB(db);
+             console.log("✅ Lead saved to DB:", lead);
+             
+             // Update the last saved state
+             lastSavedLead = currentLeadSig;
+          } else {
+             console.log("ℹ️ Duplicate lead data detected, skipping DB save.");
+          }
+        }
+      } catch (e) { console.warn("Bad tool JSON", e); }
+    }
+
+    convo.push({ role: "assistant", content: reply });
+    await speakElevenLabs(reply);
+  }
+
+  async function speakElevenLabs(text) {
+    try {
+      if (!ELEVENLABS_API_KEY) throw new Error("No ElevenLabs Key");
+      
+      // Pronunciation fixes
+      let ttsText = text
+        .replace(/Elsewedy/gi, "El Sewedy") // Ensure space
+        .replace(/El Sewedy/gi, "El Sewedy"); // Standardize (no-op but safe)
+        
+      const modelId = process.env.ELEVENLABS_MODEL_ID || "eleven_multilingual_v2";
+      const stability = parseFloat(process.env.ELEVENLABS_STABILITY || "0.5");
+      const similarity = parseFloat(process.env.ELEVENLABS_SIMILARITY_BOOST || "0.75");
+
+      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}/stream?optimize_streaming_latency=3`, {
+        method: "POST",
+        headers: {
+          "xi-api-key": ELEVENLABS_API_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          text: ttsText,
+          model_id: modelId,
+          voice_settings: { stability: stability, similarity_boost: similarity }
+        })
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`ElevenLabs ${response.status}: ${err}`);
+      }
+
+      // Stream audio chunks to client
+      const reader = response.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        ws.send(value); // Send raw MP3 chunk
+      }
+      ws.send(JSON.stringify({ type: 'tts_end' }));
+    } catch (e) {
+      console.error("ElevenLabs TTS error", e);
+    }
+  }
+
+  // Initial greeting
+  if (GREETING_ON_START) speakElevenLabs(GREETING_TEXT);
+}
+
+function handleTwilioConnection(ws) {
+  console.log("Twilio connected");
   const db = loadDB();
   const convo = [ { role: "system", content: SYSTEM_PROMPT } ];
   const caller = { phone: null };
@@ -620,6 +787,6 @@ wss.on("connection", (ws) => {
       azureRecognizer = null;
     }
   });
-});
+}
 
 server.listen(PORT, () => console.log(`AI receptionist server listening on ${PORT}. Public URL: ${PUBLIC_URL}`));
