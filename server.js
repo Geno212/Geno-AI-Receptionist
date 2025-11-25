@@ -524,7 +524,7 @@ function handleBrowserConnection(ws) {
       const stability = parseFloat(process.env.ELEVENLABS_STABILITY || "0.5");
       const similarity = parseFloat(process.env.ELEVENLABS_SIMILARITY_BOOST || "0.75");
 
-      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}/stream?optimize_streaming_latency=3&output_format=pcm_24000`, {
+      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}/stream?optimize_streaming_latency=3&output_format=pcm_44100`, {
         method: "POST",
         headers: {
           "xi-api-key": ELEVENLABS_API_KEY,

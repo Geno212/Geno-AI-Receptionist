@@ -508,7 +508,8 @@
     // Audio Context & PCM Player
     let audioCtx;
     let nextStartTime = 0;
-    const SAMPLE_RATE = 24000; // Must match server output_format=pcm_24000
+    const SAMPLE_RATE = 44100; // Must match server output_format=pcm_44100
+    let pcmBufferQueue = new Uint8Array(0); // Buffer for split frames
 
     async function startCall(){
       if(isRecording) return;
@@ -516,12 +517,15 @@
       
       // Initialize Audio Context on user gesture
       if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SAMPLE_RATE });
+        // Do not force sampleRate in constructor, let browser decide (usually 44100 or 48000)
+        // We will resample via createBuffer
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
       if (audioCtx.state === 'suspended') {
         await audioCtx.resume();
       }
       nextStartTime = 0;
+      pcmBufferQueue = new Uint8Array(0);
 
       // 1. Connect WebSocket
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -546,7 +550,7 @@
             setVisualizerState('speaking');
             setStatus('speaking');
             // Reset timing for new utterance
-            nextStartTime = audioCtx.currentTime + 0.1; 
+            nextStartTime = audioCtx.currentTime + 0.05; 
           }
           playPCMChunk(event.data);
         } else {
@@ -591,14 +595,43 @@
     function playPCMChunk(arrayBuffer) {
         if (!audioCtx) return;
         
+        // Check for MP3 header (ID3 or Sync Word) to warn user
+        const headerView = new Uint8Array(arrayBuffer.slice(0, 4));
+        if (headerView[0] === 0xFF && (headerView[1] & 0xE0) === 0xE0) {
+             console.error("Received MP3 data instead of PCM. Server restart required.");
+             addChatMessage("Error: Server sending MP3. Please restart server.", "system");
+             return;
+        }
+        if (headerView[0] === 0x49 && headerView[1] === 0x44 && headerView[2] === 0x33) { // ID3
+             console.error("Received MP3 ID3 tag. Server restart required.");
+             addChatMessage("Error: Server sending MP3. Please restart server.", "system");
+             return;
+        }
+
+        // Append new data to queue
+        const newChunk = new Uint8Array(arrayBuffer);
+        const combined = new Uint8Array(pcmBufferQueue.length + newChunk.length);
+        combined.set(pcmBufferQueue);
+        combined.set(newChunk, pcmBufferQueue.length);
+        
+        // Process only complete 16-bit samples (multiples of 2)
+        const remainder = combined.length % 2;
+        const processableLength = combined.length - remainder;
+        
+        if (processableLength === 0) {
+            pcmBufferQueue = combined;
+            return;
+        }
+        
+        const processBuffer = combined.slice(0, processableLength);
+        pcmBufferQueue = combined.slice(processableLength); // Keep remainder for next chunk
+        
         // Convert Int16Array (raw PCM) to Float32Array
-        const int16Data = new Int16Array(arrayBuffer);
+        const int16Data = new Int16Array(processBuffer.buffer);
         const float32Data = new Float32Array(int16Data.length);
         
         for (let i = 0; i < int16Data.length; i++) {
             // Normalize to [-1.0, 1.0]
-            // If value is 32768 (which is out of signed 16-bit range but possible in some encodings), clamp it? 
-            // Standard Int16 is -32768 to 32767.
             float32Data[i] = int16Data[i] / 32768.0;
         }
 
@@ -610,7 +643,6 @@
         source.connect(audioCtx.destination);
 
         // Schedule playback
-        // If nextStartTime is in the past, reset it to now
         if (nextStartTime < audioCtx.currentTime) {
             nextStartTime = audioCtx.currentTime;
         }
