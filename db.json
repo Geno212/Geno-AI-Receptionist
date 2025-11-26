@@ -1,7 +1,7 @@
 {
   "company_info": {
     "name": "El Sewedy Electric",
-    "description": "A leading integrated energy solutions provider in the Middle East and Africa, operating in 5 key business sectors: Wire, Cable & Accessories, Electrical Products, Engineering & Construction, Digital Solutions, and Infrastructure Investments.",
+    "description": "El Sewedy Electric is a global leader in integrated energy solutions, infrastructure, and digital innovation, founded in 1938.",
     "headquarters": "Cairo, Egypt",
     "contact": {
       "phone": "+20 2 27599700",
@@ -9,32 +9,60 @@
       "website": "https://www.elsewedyelectric.com",
       "address": "Plot 27, 1st District, 5th Settlement, New Cairo, Egypt"
     },
-    "key_services_products": [
-      "Wires, Cables & Accessories",
-      "Transformers",
-      "Meters (Iskraemeco)",
-      "Turnkey Projects (Engineering & Construction)",
-      "Wind Energy Generation",
-      "Digital Solutions",
-      "Insulators",
-      "Explosion Proof Equipment"
+    "sectors": [
+      "Wire, Cable & Accessories (Power, Special, Telecom)",
+      "Electrical Products (Transformers, Motors, Insulators)",
+      "Engineering & Construction (Turnkey Power/Infra Projects)",
+      "Digital Solutions (Smart Meters, Data Centers, Automation)",
+      "Infrastructure Investments (Green Energy, Industrial Cities)"
+    ],
+    "key_facts": [
+      "Revenues: $5.13 Billion+ (2024)",
+      "Employees: 19,000+",
+      "Presence: 110+ Countries, 34+ Production Facilities",
+      "Listed on EGX (Ticker: SWDY)"
+    ],
+    "recent_news": [
+      "Signed EGP 20B credit facility with Emirates NBD (Oct 2025)",
+      "Acquired 60% of Thomassen Service (May 2025)",
+      "Partnered with Morshedy Group for EV charging infrastructure (May 2025)",
+      "Building $400M Industrial City in Tanzania",
+      "Signed MOU with Iraq Development Fund for non-oil investments (Oct 2024)"
+    ],
+    "leadership": [
+      {
+        "name": "Ahmed Ahmed Elsewedy",
+        "title": "CEO & Managing Director"
+      },
+      {
+        "name": "Sadek Ahmed Sadek El Sewedy",
+        "title": "Chairman"
+      },
+      {
+        "name": "Abdelrahman Ahmed Elsewedy",
+        "title": "Group Chief Strategy Officer"
+      },
+      {
+        "name": "Mohamed Ahmed Sadek Elsewedy",
+        "title": "CEO Wires & Cables"
+      }
+    ],
+    "key_contacts": [
+      {
+        "name": "Asser Emad",
+        "profile": "Group Treasury Director at El Sewedy Electric. Experienced in Corporate Finance, Treasury Management, and Banking Relationships.",
+        "linkedin": "https://www.linkedin.com/in/asser-emad-06a92025"
+      },
+      {
+        "name": "Mohamed Z",
+        "profile": "Treasury Manager at El Sewedy Electric. Specializes in Cash Management, Financial Analysis, and Risk Management.",
+        "linkedin": "https://www.linkedin.com/in/mohamed-z-19927b"
+      }
     ],
     "working_hours": {
       "standard": "09:00 - 17:00",
       "days": "Sunday - Thursday"
-    },
-    "recent_news": [
-      {
-        "date": "Mar 2025",
-        "title": "Partnership with IL CAZAR Developments",
-        "summary": "Strategic partnership to provide sustainable energy solutions (cables, transformers, meters) for real estate projects like Safia and The Crest."
-      },
-      {
-        "date": "Jan 2025",
-        "title": "EcoVadis Gold Medal",
-        "summary": "Subsidiary Iskraemeco awarded EcoVadis Gold Medal for sustainability excellence, placing in top 1% of industry."
-      }
-    ]
+    }
   },
   "customers": [
     {
@@ -191,7 +219,7 @@
     },
     {
       "id": 20,
-      "name": "Ahmed Tarik",
+      "name": "Ahmed Tarek",
       "phone": "+201555678",
       "email": "ahmed.aljanainy@outlook.com",
       "interest": "Cables",
@@ -340,11 +368,75 @@
       "email": "ahmedtarik@gmail.com",
       "interest": "Cables",
       "created_at": 1764093944270
+    },
+    {
+      "id": 39,
+      "name": "Ahmed Tarek",
+      "phone": "+2015527",
+      "email": "ahmed.elganainy@outlook.com",
+      "interest": "Cables",
+      "created_at": 1764127763234
+    },
+    {
+      "id": 40,
+      "name": "Mahmoud",
+      "phone": "+2015554",
+      "email": "abdullah.suleiman@example.com",
+      "interest": "Cables",
+      "created_at": 1764128453668
+    },
+    {
+      "id": 41,
+      "name": "Mahmoud",
+      "phone": "+201554",
+      "email": "abdullah.ipdy.ul.iah.dot.sol.iam.in.at.deval.os.ways.tms.com",
+      "interest": "Cables",
+      "created_at": 1764128516765
+    },
+    {
+      "id": 42,
+      "name": "Ahmed Tarek",
+      "phone": "+2010278224",
+      "email": "abdullah.souliman@devolosys.com",
+      "interest": "Cables",
+      "created_at": 1764128965324
+    },
+    {
+      "id": 43,
+      "name": "Mido",
+      "phone": "+20105667824",
+      "email": "ABDULLAH.South@DEVELOS.com",
+      "interest": "Cables",
+      "created_at": 1764129301586
+    },
+    {
+      "id": 44,
+      "name": "Mahmoud Ahmed",
+      "phone": "+20101025674",
+      "email": "suleiman@thesystems.com",
+      "interest": "Cables",
+      "created_at": 1764129464853
+    },
+    {
+      "id": 45,
+      "name": "Mahmoud Ahmed",
+      "phone": "010102724",
+      "company": "As Creamka",
+      "interest": "Cables",
+      "created_at": 1764130496745
+    },
+    {
+      "id": 46,
+      "name": "Mahmoud Ahmed",
+      "phone": "+2010102724",
+      "company": "As Creamka",
+      "interest": "Cables",
+      "created_at": 1764130581936
     }
   ],
   "inquiries": [],
   "counters": {
-    "customers": 38,
+    "customers": 46,
     "inquiries": 0
   }
 }

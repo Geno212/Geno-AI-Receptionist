@@ -42,30 +42,13 @@ const GREETING_TEXT = process.env.GREETING_TEXT || "أهلاً بك في الس�
 
 // ========== LIGHT DB (JSON file) ==========
 const dbPath = path.join(__dirname, "db.json");
-function seedDB() {
-  return {
-    customers: [ { id: 1, phone_e164: "+201001234567", name: "أحمد علي", notes: "", created_at: Date.now() } ],
-    reservations: [],
-    menu_items: [
-      { id: 1, name_ar: "كشري", name_en: "Koshary", description_ar: "أرز ومكرونة وعدس وبصل مقرمش", price_egp: 95, is_available: true, category: "mains" },
-      { id: 2, name_ar: "ملوخية", name_en: "Molokhia", description_ar: "شوربة ملوخية مع ثوم وكزبرة", price_egp: 85, is_available: true, category: "mains" },
-      { id: 3, name_ar: "حمص", name_en: "Hummus", description_ar: "حمص مهروس مع طحينة", price_egp: 70, is_available: true, category: "mezzes" },
-      { id: 4, name_ar: "أم علي", name_en: "Om Ali", description_ar: "حلوى باللبن والمكسرات", price_egp: 75, is_available: true, category: "desserts" },
-    ],
-    opening_hours: [
-      { id: 1, weekday: 1, open_time: "12:00", close_time: "23:00" },
-      { id: 2, weekday: 2, open_time: "12:00", close_time: "23:00" },
-      { id: 3, weekday: 3, open_time: "12:00", close_time: "23:00" },
-      { id: 4, weekday: 4, open_time: "12:00", close_time: "23:00" },
-      { id: 5, weekday: 5, open_time: "12:00", close_time: "00:00" },
-      { id: 6, weekday: 6, open_time: "12:00", close_time: "00:00" },
-      { id: 7, weekday: 7, open_time: "12:00", close_time: "23:00" },
-    ],
-    special_days: [],
-    counters: { customers: 1, reservations: 0 },
-  };
+function loadDB() { 
+  if (!fs.existsSync(dbPath)) {
+    // Minimal init if missing
+    fs.writeFileSync(dbPath, JSON.stringify({ company_info: {}, customers: [], reservations: [], counters: { customers: 0, reservations: 0 } }, null, 2)); 
+  }
+  return JSON.parse(fs.readFileSync(dbPath, "utf8")); 
 }
-function loadDB() { if (!fs.existsSync(dbPath)) fs.writeFileSync(dbPath, JSON.stringify(seedDB(), null, 2)); return JSON.parse(fs.readFileSync(dbPath, "utf8")); }
 function saveDB(db) { fs.writeFileSync(dbPath, JSON.stringify(db, null, 2)); }
 
 function findOrCreateCustomer(db, { phone_e164, name }) {
@@ -453,30 +436,33 @@ function handleBrowserConnection(ws) {
      - **Lists**: When listing products/services, mention 2-3 key items naturally and ask if they want more details. Do not list everything at once.
      - **News**: Summarize 'recent_news' naturally as if telling a story.
   6. **Lead Generation**: 
-     - If the user expresses interest in products/services, you **MUST** collect their **Name**, **Phone Number**, and **Email**.
+     - If the user expresses interest in products/services, you **MUST** collect their **Name**, **Phone Number**, and **Company Name**.
      - **Do NOT** end the conversation or say goodbye until you have all three pieces of information.
      - If the user provides only some info, ask for the rest in the **current conversation language**.
      - Once you have all info, output the tool JSON **IMMEDIATELY** at the start of your response.
   
   **STRICT OUTPUT FORMAT**:
-  - Do NOT output the tool JSON unless you have ALL 3 fields (Name, Phone, Email).
-  - **NEVER** speak the words "Tool Format", "JSON", "name", "phone", or "email" in English when the user is speaking Arabic.
+  - Do NOT output the tool JSON unless you have ALL 3 fields (Name, Phone, Company Name).
+  - **NEVER** speak the words "Tool Format", "JSON", "name", "phone", or "company" in English when the user is speaking Arabic.
   - **NEVER** switch to Arabic when the user is speaking English, even if their name is Arabic.
   - **NEVER** switch languages mid-sentence or mid-response.
   - **NEVER** output text like "(Tool Format: ...)" or "Here is the JSON".
   - **NEVER** use parentheses "(...)" to give instructions or ask for info in English if the conversation is in Arabic.
   - Just output the <tool>...</tool> block if ready, followed by your natural language response.
-  - **DATA FORMAT**: When saving the lead, **ALWAYS** transliterate Arabic names to English (e.g., "Ahmed" instead of "أحمد") and ensure the email is in valid format.
-  - **ONE-TIME SAVE**: Only output the <tool> block ONCE when you first collect the full info. Do NOT output it again in subsequent turns unless the user explicitly changes their information.
+  - **DATA FORMAT**: When saving the lead, **ALWAYS** transliterate Arabic names to English (e.g., "Ahmed" instead of "أحمد").
+   - **ONE-TIME SAVE**: Only output the <tool> block ONCE when you first collect the full info. 
+   - **STOP CONDITION**: After you have successfully output the <tool> block once, do NOT output it again for the rest of the conversation.
+   - **EXCEPTION**: Only output the <tool> block again if the user EXPLICITLY asks to "change", "update", or "correct" their information.
+   - If the user asks normal questions (e.g. "What is the news?", "Tell me about X"), just answer them. DO NOT output the tool block.
 
   **EXAMPLES OF ASKING FOR INFO**:
-  - English: "Could I please have your name, phone number, and email to assist you further?"
-  - Arabic: "ممكن الاسم ورقم التليفون والإيميل عشان أقدر أساعدك؟"
-  - Japanese: "お客様のお名前、電話番号、メールアドレスを教えていただけますか？"
+  - English: "Could I please have your name, phone number, and company name to assist you further?"
+  - Arabic: "ممكن الاسم ورقم التليفون واسم الشركة عشان أقدر أساعدك؟"
+  - Japanese: "お客様のお名前、電話番号、会社名を教えていただけますか？"
 
   Tool Schema:
-  <tool>{"name":"save_lead","args":{"name":"John Doe","phone":"+123456789","email":"john@example.com","interest":"Cables"}}</tool>
-  `;
+  <tool>{"name":"save_lead","args":{"name":"John Doe","phone":"+123456789","company":"El Sewedy Inc","interest":"Cables"}}</tool>
+`;
 
   const convo = [ { role: "system", content: dynamicPrompt } ];
 
@@ -520,29 +506,28 @@ function handleBrowserConnection(ws) {
       try {
         const action = JSON.parse(m[1]);
         if (action?.name === "save_lead") {
-          const { name, phone, email, interest } = action.args || {};
+          const { name, phone, company, interest } = action.args || {};
           
           // Normalize for deduplication
           const normPhone = (phone || "").trim();
-          const normEmail = (email || "").trim().toLowerCase();
+          // const normEmail = (email || "").trim().toLowerCase();
 
-          if (normPhone || normEmail) {
+          if (normPhone) {
              if (!db.customers) db.customers = [];
              
-             // Find existing customer by phone or email
+             // Find existing customer by phone
              let existing = db.customers.find(c => 
-               (normPhone && c.phone === normPhone) || 
-               (normEmail && c.email && c.email.toLowerCase() === normEmail)
+               (normPhone && c.phone === normPhone)
              );
 
              if (existing) {
                // Update existing if changed
                let changed = false;
-               // Update name if provided and different (and not just a transliteration difference if possible, but simple check for now)
+               // Update name if provided and different
                if (name && existing.name !== name) { existing.name = name; changed = true; }
                if (interest && existing.interest !== interest) { existing.interest = interest; changed = true; }
-               if (email && !existing.email) { existing.email = email; changed = true; }
-               if (phone && !existing.phone) { existing.phone = phone; changed = true; }
+               if (company && existing.company !== company) { existing.company = company; changed = true; }
+               if (phone && existing.phone !== phone) { existing.phone = phone; changed = true; }
 
                if (changed) {
                  saveDB(db);
@@ -557,7 +542,7 @@ function handleBrowserConnection(ws) {
                  id: db.counters.customers, 
                  name: name || "Client", 
                  phone: normPhone, 
-                 email: email || "", // Keep original casing for display
+                 company: company || "", 
                  interest: interest || "", 
                  created_at: Date.now() 
                };
@@ -581,10 +566,10 @@ function handleBrowserConnection(ws) {
       .replace(/El Sewedy/gi, "El Sewedy");
 
     // 2. Email handling: Replace symbols with words to ensure clear reading in any language
-    const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
-    processed = processed.replace(emailRegex, (match) => {
-      return match.replace(/\./g, " dot ").replace(/@/g, " at ");
-    });
+    // const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
+    // processed = processed.replace(emailRegex, (match) => {
+    //   return match.replace(/\./g, " dot ").replace(/@/g, " at ");
+    // });
 
     // 3. Numerals: Convert digits to words based on language context
     // This ensures digit-by-digit reading (e.g. phone numbers) instead of whole numbers.

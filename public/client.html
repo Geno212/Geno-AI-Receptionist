@@ -186,7 +186,8 @@
       opacity: 0.3;
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      transition: all 0.5s ease;
+      transition: width 0.1s ease-out, height 0.1s ease-out, opacity 0.1s ease-out; /* Faster transition for audio sync */
+      will-change: width, height, opacity;
     }
     
     .ring-1 { width: 140px; height: 140px; border-width: 1px; }
@@ -632,11 +633,22 @@
     let isAiSpeaking = false;
     let isCommitting = false;
     
-    // Audio Context & PCM Player
+    // Audio Context & PCM Player & Analyzer
     let audioCtx;
+    let analyser;
+    let microphoneStream;
+    let globalStream; // Store stream to stop tracks later
+    let dataArray;
+    let visualizerInterval;
+    
     let nextStartTime = 0;
     const SAMPLE_RATE = 24000; // Must match server output_format=pcm_24000
     let pcmBufferQueue = new Uint8Array(0); // Buffer for split frames
+
+    // VAD Parameters
+    const VAD_THRESHOLD = 15; // Volume threshold (0-255)
+    let silenceStart = null;
+    let speechDetected = false;
 
     async function startCall(){
       if(isRecording) return;
@@ -644,8 +656,6 @@
       
       // Initialize Audio Context on user gesture
       if (!audioCtx) {
-        // Do not force sampleRate in constructor, let browser decide (usually 44100 or 48000)
-        // We will resample via createBuffer
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
       if (audioCtx.state === 'suspended') {
@@ -653,6 +663,30 @@
       }
       nextStartTime = 0;
       pcmBufferQueue = new Uint8Array(0);
+
+      // Start Microphone Analysis (Visualizer + VAD)
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: { 
+                echoCancellation: true, 
+                noiseSuppression: true, 
+                autoGainControl: true 
+            } 
+        });
+        globalStream = stream; // Save reference
+        microphoneStream = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        microphoneStream.connect(analyser);
+        
+        const bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+        
+        startVisualizer();
+      } catch (e) {
+        console.error("Mic analysis failed:", e);
+        // Continue anyway, just without visualizer/custom VAD
+      }
 
       // 1. Connect WebSocket
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -711,6 +745,14 @@
       ws.onclose = () => {
         addChatMessage("Call ended", "system");
         stopSTT();
+        
+        // Stop Mic Stream
+        if(globalStream) {
+            globalStream.getTracks().forEach(track => track.stop());
+            globalStream = null;
+        }
+        if(visualizerInterval) clearInterval(visualizerInterval);
+
         setStatus('ready');
         setVisualizerState(null);
         $('#btnCall').disabled = false;
@@ -772,6 +814,53 @@
         nextStartTime += buffer.duration;
     }
 
+    function startVisualizer() {
+        if (visualizerInterval) clearInterval(visualizerInterval);
+        
+        const r1 = $('.ring-1');
+        const r2 = $('.ring-2');
+        const r3 = $('.ring-3');
+        const core = $('.ai-core');
+        
+        visualizerInterval = setInterval(() => {
+            if (!analyser || isAiSpeaking) return; // Don't visualize mic when AI is speaking (echo safety)
+            
+            analyser.getByteFrequencyData(dataArray);
+            
+            // Calculate average volume
+            let sum = 0;
+            for(let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / dataArray.length;
+            
+            // Visualizer Logic
+            if (isRecording && !isAiSpeaking) {
+                // Boost the effect
+                const scale = 1 + (average / 256) * 1.5; 
+                const opacity = 0.3 + (average / 256);
+                
+                core.style.transform = `scale(${0.9 + (average/256)})`;
+                
+                r1.style.width = `${140 * scale}px`;
+                r1.style.height = `${140 * scale}px`;
+                r1.style.opacity = opacity;
+                
+                r2.style.width = `${200 * (scale * 0.8)}px`;
+                r2.style.height = `${200 * (scale * 0.8)}px`;
+                
+                // VAD Logic for snappy endpointing
+                if (average > VAD_THRESHOLD) {
+                    silenceStart = null;
+                    speechDetected = true;
+                    setVisualizerState('listening');
+                } else {
+                    if (!silenceStart) silenceStart = Date.now();
+                }
+            }
+        }, 50);
+    }
+
     let silenceTimer;
 
     function startSTT() {
@@ -785,38 +874,56 @@
       recognition.lang = $('#langSelect').value || 'ar-EG';
       recognition.continuous = true;
       recognition.interimResults = true; 
+      recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
         setVisualizerState('listening');
         setStatus('listening');
+        silenceStart = Date.now(); // Initialize
       };
 
       recognition.onresult = (event) => {
+        // Clear old dumb timer
         clearTimeout(silenceTimer);
         
         const last = event.results.length - 1;
         const text = event.results[last][0].transcript;
         const isFinal = event.results[last].isFinal;
 
+        // Visual feedback that we are hearing text
+        $('#status').textContent = "HEARD: " + (text.length > 20 ? text.substring(0,20)+"..." : text);
+
         if (isFinal) {
             commitSpeech(text);
         } else {
-            // Wait 1.5s of silence to assume speech is done
-            silenceTimer = setTimeout(() => {
-                commitSpeech(text);
-            }, 1500);
+            // Smart VAD check: If we have interim text, but audio has been silent for 2500ms, force commit
+            // This relies on the visualizer loop updating 'silenceStart'
+            if (speechDetected && silenceStart && (Date.now() - silenceStart > 2500)) {
+                 // Force commit interim result
+                 commitSpeech(text);
+                 recognition.stop();
+            } else {
+                 // Fallback timer if VAD fails or mic level is weird
+                 silenceTimer = setTimeout(() => {
+                    commitSpeech(text);
+                }, 3500);
+            }
         }
       };
 
       recognition.onerror = (e) => {
-        if (e.error !== 'no-speech' && e.error !== 'aborted') console.log('STT Error: ' + e.error);
+        if (e.error !== 'no-speech' && e.error !== 'aborted') {
+            console.log('STT Error: ' + e.error);
+            // If network error, try to restart
+            if (e.error === 'network') setTimeout(startSTT, 1000);
+        }
       };
 
       recognition.onend = () => {
         if (isRecording) recognition.start(); 
       };
 
-      recognition.start();
+      try { recognition.start(); } catch(e){}
       isRecording = true;
     }
 
@@ -843,6 +950,12 @@
 
     function hangup(){ 
       if(ws) ws.close(); 
+      if(globalStream) {
+        globalStream.getTracks().forEach(track => track.stop());
+        globalStream = null;
+      }
+      if(visualizerInterval) clearInterval(visualizerInterval);
+      setVisualizerState(null); // Reset UI
     }
 
     // Buttons & Shortcuts
