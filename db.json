@@ -36,27 +36,78 @@
       },
       {
         "name": "Sadek Ahmed Sadek El Sewedy",
-        "title": "Chairman"
+        "title": "Non-Executive Chairman",
+        "profile": "Senior member of the group. Under his leadership, the company grew from a small local business started in 1938 into a global multinational active in energy, infrastructure, and manufacturing."
       },
       {
         "name": "Abdelrahman Ahmed Elsewedy",
-        "title": "Group Chief Strategy Officer"
+        "title": "Group Chief Operations & Strategy Officer",
+        "profile": "Executive Board Member supervising operations, strategy, and global expansion. Founder & Chairman of Kiyaa Capital. Leads digital infrastructure, telecom-cables, and steel business units."
       },
       {
         "name": "Mohamed Ahmed Sadek Elsewedy",
-        "title": "CEO Wires & Cables"
+        "title": "Vice President & CEO Wires & Cables",
+        "profile": "Leads the core Wires & Cables business. Transformed the company into a global integrated energy-solutions provider. Co-founder of Breadfast, Magma Sportwear, and Kings Polo Club."
       }
+    ],
+    "affiliated_companies": [
+      "Elsewedy Electric (Main listed company: cables, infrastructure, energy)",
+      "Production Arms: Cables & wires, electrical equipment, lighting, transformers",
+      "Building Materials: Cement, ready-mix concrete, chemical industries, steel fabrication",
+      "Real Estate & Development",
+      "Digital Infrastructure & Supply Chain Ventures",
+      "External Ventures: Breadfast (Grocery), Magma Sportwear (Apparel), Kings Polo Club (Sports)"
     ],
     "key_contacts": [
       {
         "name": "Asser Emad",
-        "profile": "Group Treasury Director at El Sewedy Electric. Experienced in Corporate Finance, Treasury Management, and Banking Relationships.",
-        "linkedin": "https://www.linkedin.com/in/asser-emad-06a92025"
+        "profile": "Group Director of Administration & Facilities management at El Sewedy Electric. Experienced Director Of Administration and Facilities working in Egypt, United Arab Emirates, Iraq, Tanzania and other 5 countries. In charge of all facilities and life support services in addition to security.",
+        "linkedin": "https://www.linkedin.com/in/asser-emad-06a92025",
+        "work_history": [
+          {
+            "title": "Group Director of Administration",
+            "company": "El Sewedy Electric HQ",
+            "duration": "Nov 2015 - Present",
+            "description": "In charge of El Sewedy Group administration, facility and security sectors, operating in 16 countries."
+          },
+          {
+            "title": "Administration & Main Head Office Building Manager",
+            "company": "El Sewedy Electric",
+            "duration": "Mar 2010 - Oct 2015",
+            "description": "Managing the administration and governmental relations, housekeeping, security, stores, transportation, cafeteria, maintenance, purchasing, and investigations."
+          },
+          {
+            "title": "HR Manager",
+            "company": "Four Seasons Resort at Sharm El Sheikh",
+            "duration": "2006 - 2010",
+            "description": "Managed people development, resort administration, governmental paper work, benefits programs, performance reviews, and staff investigations."
+          },
+          {
+            "title": "Police Officer",
+            "company": "Egyptian Ministry of Interior",
+            "duration": "Aug 1992 - Feb 2005",
+            "description": "Investigations."
+          }
+        ]
       },
       {
-        "name": "Mohamed Z",
-        "profile": "Treasury Manager at El Sewedy Electric. Specializes in Cash Management, Financial Analysis, and Risk Management.",
-        "linkedin": "https://www.linkedin.com/in/mohamed-z-19927b"
+        "name": "Mohamed Zamzam",
+        "profile": "General Manager at Arab Security & Facility Management. Previously Executive Director - Senior Executive Asst. - CEO at Elsewedy Electric (Jan 1997 - Feb 2025).",
+        "linkedin": "https://www.linkedin.com/in/mohamed-z-19927b",
+        "work_history": [
+          {
+            "title": "General Manager",
+            "company": "Arab Security And Facility Management",
+            "duration": "Feb 2025 - Present",
+            "description": "General Manager role."
+          },
+          {
+            "title": "Executive Director - Senior Executive Asst. and Office Manager to CEO Ahmed Elsewedy office",
+            "company": "Elsewedy Electric",
+            "duration": "Jan 1997 - Feb 2025",
+            "description": "Served as Executive Director and Senior Executive Assistant to the CEO for over 28 years."
+          }
+        ]
       }
     ],
     "working_hours": {
@@ -203,11 +254,12 @@
     },
     {
       "id": 18,
-      "name": "Ahmed Tarek Mahmoud",
+      "name": "Mustafa",
       "phone": "+201555678",
       "email": "",
       "interest": "Cables",
-      "created_at": 1764091648290
+      "created_at": 1764091648290,
+      "company": "Google"
     },
     {
       "id": 19,
@@ -432,11 +484,149 @@
       "company": "As Creamka",
       "interest": "Cables",
       "created_at": 1764130581936
+    },
+    {
+      "id": 47,
+      "name": "Ahmed",
+      "phone": "+2015556789",
+      "company": "Dealtable AI",
+      "interest": "Cables",
+      "created_at": 1764167911197
+    },
+    {
+      "id": 48,
+      "name": "Ahmed",
+      "phone": "0155247",
+      "company": "Unknown",
+      "interest": "Special Cables",
+      "created_at": 1764168025042
+    },
+    {
+      "id": 49,
+      "name": "Mustafa",
+      "phone": "0155678",
+      "company": "Google",
+      "interest": "Cables",
+      "created_at": 1764178752721
+    },
+    {
+      "id": 50,
+      "name": "Mustafa",
+      "phone": "01678",
+      "company": "Google",
+      "interest": "Telecom Cables",
+      "created_at": 1764180002699
+    },
+    {
+      "id": 51,
+      "name": "Mustafa",
+      "phone": "+20122245",
+      "company": "Google",
+      "interest": "Telecom Cables",
+      "created_at": 1764180031865
+    },
+    {
+      "id": 52,
+      "name": "John Doe",
+      "phone": "+123456789",
+      "company": "Unknown",
+      "interest": "Transmission Cables",
+      "created_at": 1764180627115
+    },
+    {
+      "id": 53,
+      "name": "Mustafa",
+      "phone": "01456",
+      "company": "Google",
+      "interest": "Transmission Cables",
+      "created_at": 1764181044538
+    },
+    {
+      "id": 54,
+      "name": "Mustafa",
+      "phone": "0155672",
+      "company": "Google",
+      "interest": "transmission cables",
+      "created_at": 1764181397172
+    },
+    {
+      "id": 55,
+      "name": "Mustafa",
+      "phone": "015789",
+      "company": "Google",
+      "interest": "Transmission Cables",
+      "created_at": 1764181682609
+    },
+    {
+      "id": 56,
+      "name": "Mustafa",
+      "phone": "01523",
+      "company": "Google",
+      "interest": "Transmission Cables",
+      "created_at": 1764182120196
+    },
+    {
+      "id": 57,
+      "name": "Mustafa",
+      "phone": "017789",
+      "company": "Google",
+      "interest": "Transmission Cables",
+      "created_at": 1764184334902
+    },
+    {
+      "id": 58,
+      "name": "Mustafa",
+      "phone": "0105247",
+      "company": "Google",
+      "interest": "Cables",
+      "created_at": 1764187098341
+    },
+    {
+      "id": 59,
+      "name": "Ahmed Tarek",
+      "phone": "01552478",
+      "company": "مصطفى",
+      "interest": "كابلات",
+      "created_at": 1764187690562
+    },
+    {
+      "id": 60,
+      "name": "Mustafa",
+      "phone": "0108847",
+      "company": "Google",
+      "interest": "كابلات",
+      "created_at": 1764187890630
+    },
+    {
+      "id": 61,
+      "name": "Mostafa",
+      "phone": "+20102778910",
+      "company": "Google",
+      "interest": "كابلات",
+      "created_at": 1764189107345
+    }
+  ],
+  "meetings": [
+    {
+      "id": 1,
+      "host_name": "Asser Emad",
+      "host_email": "asser.emad@elsewedy.com",
+      "visitor_name": "Mostafa",
+      "visitor_company": "Google",
+      "time": "20:00"
+    },
+    {
+      "id": 2,
+      "host_name": "Ahmed Sadek",
+      "host_email": "ahmed@elsewedy.com",
+      "visitor_name": "John Smith",
+      "visitor_company": "Microsoft",
+      "time": "15:00"
     }
   ],
   "inquiries": [],
   "counters": {
-    "customers": 46,
+    "customers": 61,
     "inquiries": 0
   }
 }

@@ -39,8 +39,8 @@
 
     /* --- Header --- */
     .header {
-      height: 70px;
-      padding: 0 24px;
+      height: 220px;
+      padding: 0 40px;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -57,30 +57,15 @@
     }
 
     .brand img {
-      height: 36px;
+      height: 200px;
       width: auto;
-      filter: drop-shadow(0 0 10px rgba(227, 30, 36, 0.3));
+      filter: drop-shadow(0 0 25px rgba(227, 30, 36, 0.6));
       transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
     }
     
     .brand:hover img {
-      transform: scale(1.1) rotate(5deg);
+      transform: scale(1.05);
     }
-
-    .brand-text {
-      font-family: 'Cairo', sans-serif;
-      font-weight: 800;
-      font-size: 22px;
-      line-height: 1;
-      letter-spacing: -0.02em;
-      text-transform: uppercase;
-      transition: text-shadow 0.3s ease;
-    }
-    
-    .brand:hover .brand-text {
-      text-shadow: 0 0 15px rgba(227, 30, 36, 0.4);
-    }
-    .brand-text span { color: var(--brand-red); }
 
     .header-controls {
       display: flex;
@@ -410,6 +395,14 @@
 
     /* --- Responsive Design --- */
     @media (max-width: 900px) {
+      .header {
+        height: 160px; /* Adjusted for tablet/large phone */
+        padding: 0 24px;
+      }
+      .brand img {
+        height: 140px; /* Adjusted for tablet/large phone */
+      }
+
       .main-container {
         flex-direction: column;
       }
@@ -457,9 +450,8 @@
     }
 
     @media (max-width: 400px) {
-      .header { height: 60px; padding: 0 16px; }
-      .brand-text { font-size: 18px; }
-      .brand img { height: 28px; }
+      .header { height: 160px; padding: 0 16px; }
+      .brand img { height: 140px; }
       
       .visualizer-section { height: 35vh; }
       .ai-core-container { transform: scale(0.8); margin-bottom: 10px; }
@@ -470,8 +462,7 @@
 
   <header class="header">
     <div class="brand">
-      <img src="logo.webp" alt="El Sewedy Electric Logo">
-      <div class="brand-text"><span>ELSEWEDY</span> ELECTRIC</div>
+      <img src="logo.svg" alt="El Sewedy Electric Logo">
     </div>
     <div class="header-controls">
       <button id="langToggle" class="lang-btn">العربية</button>
@@ -514,6 +505,7 @@
           <option value="es-ES">🇪🇸 Spanish (Español)</option>
           <option value="it-IT">🇮🇹 Italian (Italiano)</option>
           <option value="ja-JP">🇯🇵 Japanese (日本語)</option>
+          <option value="zh-CN">🇨🇳 Chinese (中文)</option>
         </select>
         
         <div class="control-row">
@@ -632,6 +624,7 @@
     let isRecording = false;
     let isAiSpeaking = false;
     let isCommitting = false;
+    let ttsEndTimeout = null; // Store timeout to cancel it if new audio arrives
     
     // Audio Context & PCM Player & Analyzer
     let audioCtx;
@@ -705,6 +698,12 @@
 
       ws.onmessage = async (event) => {
         if (event.data instanceof ArrayBuffer) {
+          // New audio chunk received
+          if (ttsEndTimeout) {
+            clearTimeout(ttsEndTimeout);
+            ttsEndTimeout = null;
+          }
+
           if (!isAiSpeaking) {
             isAiSpeaking = true;
             stopSTT(); // Stop listening to avoid echo
@@ -722,20 +721,24 @@
               // just wait for the queue to finish playing?
               // We can estimate when it finishes based on nextStartTime
               const remaining = nextStartTime - audioCtx.currentTime;
-              if (remaining > 0) {
-                setTimeout(() => {
+              
+              // Clear any existing timeout just in case
+              if (ttsEndTimeout) clearTimeout(ttsEndTimeout);
+
+              const scheduleSTT = () => {
                    if(isAiSpeaking) {
                      isAiSpeaking = false;
                      setVisualizerState('listening');
                      setStatus('listening');
                      startSTT();
                    }
-                }, remaining * 1000);
+                   ttsEndTimeout = null;
+              };
+
+              if (remaining > 0) {
+                ttsEndTimeout = setTimeout(scheduleSTT, remaining * 1000);
               } else {
-                 isAiSpeaking = false;
-                 setVisualizerState('listening');
-                 setStatus('listening');
-                 startSTT();
+                 scheduleSTT();
               }
             }
           } catch(e) {}
@@ -869,9 +872,16 @@
         addChatMessage("Browser does not support Speech Recognition", "system");
         return;
       }
+      
+      if (recognition) stopSTT();
+
       isCommitting = false; // Reset commit flag for new turn
       recognition = new SpeechRecognition();
-      recognition.lang = $('#langSelect').value || 'ar-EG';
+      
+      const selectedLang = $('#langSelect').value;
+      recognition.lang = selectedLang || 'en-US';
+      console.log("Starting STT with language:", recognition.lang);
+
       recognition.continuous = true;
       recognition.interimResults = true; 
       recognition.maxAlternatives = 1;
@@ -920,7 +930,13 @@
       };
 
       recognition.onend = () => {
-        if (isRecording) recognition.start(); 
+        if (isRecording) {
+            setTimeout(() => {
+                if (isRecording && recognition) {
+                    try { recognition.start(); } catch(e){}
+                }
+            }, 100);
+        } 
       };
 
       try { recognition.start(); } catch(e){}
@@ -945,7 +961,13 @@
     function stopSTT() {
       isRecording = false;
       clearTimeout(silenceTimer);
-      if (recognition) recognition.stop();
+      if (recognition) {
+        recognition.onresult = null;
+        recognition.onend = null;
+        recognition.onerror = null;
+        recognition.abort();
+        recognition = null;
+      }
     }
 
     function hangup(){ 
