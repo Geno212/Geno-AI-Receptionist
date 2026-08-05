@@ -609,19 +609,23 @@
   "meetings": [
     {
       "id": 1,
-      "host_name": "Asser Emad",
-      "host_email": "asser.emad@elsewedy.com",
-      "visitor_name": "Mostafa",
+      "host_name": "mohamed zamzam",
+      "host_email": "mohamed.zamzam@elsewedy.com",
+      "host_company": "El Sewedy Electric",
+      "department": "IT",
+      "visitor_name": "Ahmed",
       "visitor_company": "Google",
-      "time": "20:00"
+      "time": "15:40"
     },
     {
       "id": 2,
       "host_name": "Ahmed Sadek",
       "host_email": "ahmed@elsewedy.com",
-      "visitor_name": "John Smith",
-      "visitor_company": "Microsoft",
-      "time": "15:00"
+      "host_company": "El Sewedy Electric",
+      "department": "AI & Data Science",
+      "visitor_name": "Ahmed",
+      "visitor_company": "Google",
+      "time": "15:50"
     }
   ],
   "inquiries": [],

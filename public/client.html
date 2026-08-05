@@ -622,6 +622,10 @@
     let ws;
     let recognition;
     let isRecording = false;
+    // Whether to use server-side Whisper (/stt) instead of the browser engine.
+    // Resolved from GET /config at load; flipped to false if /stt ever fails,
+    // so a server outage degrades to browser recognition instead of silence.
+    let useServerStt = false;
     let isAiSpeaking = false;
     let isCommitting = false;
     let ttsEndTimeout = null; // Store timeout to cancel it if new audio arrives
@@ -866,13 +870,119 @@
 
     let silenceTimer;
 
+    // ===== Server-side STT (Groq Whisper) =====
+    // The browser Web Speech API is Chrome-only and weak on Egyptian dialect.
+    // When the server reports STT_SERVER_SIDE=1 we record the utterance with
+    // MediaRecorder, endpoint it with the SAME volume VAD the visualizer
+    // already runs, then POST it to /stt.
+    //
+    // Falls back to the browser API automatically if MediaRecorder is missing
+    // or the server is unreachable, so this can never make things worse than
+    // the previous behaviour.
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let serverSttActive = false;
+    let serverSttPollTimer = null;
+
+    function pickRecorderMime() {
+      // Whisper handles all of these; prefer ogg/opus for size, then webm.
+      const candidates = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+      for (const m of candidates) {
+        if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+      }
+      return '';
+    }
+
+    function startServerSTT() {
+      if (!globalStream || !window.MediaRecorder) return false;
+      try {
+        const mimeType = pickRecorderMime();
+        mediaRecorder = new MediaRecorder(globalStream, mimeType ? { mimeType } : undefined);
+      } catch (e) {
+        console.warn('MediaRecorder unavailable, falling back to browser STT', e);
+        return false;
+      }
+
+      recordedChunks = [];
+      isCommitting = false;
+      serverSttActive = true;
+      let speechSeen = false;
+
+      mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) recordedChunks.push(e.data); };
+      mediaRecorder.onstop = async () => {
+        clearInterval(serverSttPollTimer);
+        serverSttPollTimer = null;
+        const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+        recordedChunks = [];
+        serverSttActive = false;
+
+        // Ignore blips too short to contain speech.
+        if (!speechSeen || blob.size < 4000) { if (isRecording) startSTT(); return; }
+
+        setStatus('thinking');
+        $('#status').textContent = 'TRANSCRIBING...';
+        try {
+          const lang = ($('#langSelect').value || '').startsWith('ar') ? 'ar' : 'en';
+          const res = await fetch(`/stt?lang=${lang}`, {
+            method: 'POST',
+            headers: { 'Content-Type': blob.type || 'audio/webm' },
+            body: blob
+          });
+          const data = await res.json();
+          if (data.ok && data.text) {
+            commitSpeech(data.text);
+          } else {
+            console.warn('server STT returned nothing', data);
+            if (isRecording) startSTT();
+          }
+        } catch (e) {
+          // Network/server failure: degrade to the browser engine rather than
+          // leaving the visitor with a dead microphone.
+          console.warn('server STT failed, falling back to browser STT', e);
+          addChatMessage('Speech service unavailable, using browser recognition', 'system');
+          useServerStt = false;
+          if (isRecording) startSTT();
+        }
+      };
+
+      mediaRecorder.start(250);
+      setVisualizerState('listening');
+      setStatus('listening');
+      silenceStart = Date.now();
+
+      // Endpointing: reuse the visualizer's rolling volume analysis. Commit
+      // once we have heard speech followed by SILENCE_MS of quiet.
+      const SILENCE_MS = 1200;
+      const MAX_UTTERANCE_MS = 20000;
+      const startedAt = Date.now();
+      serverSttPollTimer = setInterval(() => {
+        if (!analyser || !dataArray) return;
+        analyser.getByteFrequencyData(dataArray);
+        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        if (avg > VAD_THRESHOLD) { speechSeen = true; silenceStart = null; }
+        else if (!silenceStart) silenceStart = Date.now();
+
+        const quietLongEnough = speechSeen && silenceStart && (Date.now() - silenceStart > SILENCE_MS);
+        const tooLong = Date.now() - startedAt > MAX_UTTERANCE_MS;
+        if ((quietLongEnough || tooLong) && mediaRecorder && mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+        }
+      }, 50);
+
+      return true;
+    }
+
     function startSTT() {
+      // Prefer server-side Whisper when available; it is browser-independent
+      // and materially better at Egyptian Arabic.
+      if (useServerStt && startServerSTT()) return;
+
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
         addChatMessage("Browser does not support Speech Recognition", "system");
         return;
       }
-      
+
       if (recognition) stopSTT();
 
       isCommitting = false; // Reset commit flag for new turn
@@ -961,6 +1071,16 @@
     function stopSTT() {
       isRecording = false;
       clearTimeout(silenceTimer);
+      if (serverSttPollTimer) { clearInterval(serverSttPollTimer); serverSttPollTimer = null; }
+      if (mediaRecorder) {
+        // Detach the handler first: an explicit stop (hangup) must not trigger
+        // a transcription round-trip for audio nobody is waiting on.
+        if (serverSttActive) mediaRecorder.onstop = null;
+        try { if (mediaRecorder.state === 'recording') mediaRecorder.stop(); } catch (e) {}
+        mediaRecorder = null;
+        serverSttActive = false;
+        recordedChunks = [];
+      }
       if (recognition) {
         recognition.onresult = null;
         recognition.onend = null;
@@ -994,6 +1114,21 @@
     navigator.mediaDevices?.getUserMedia({ audio: true }).then(stream=>{
       stream.getTracks().forEach(t=>t.stop());
     }).catch(()=>{ addChatMessage("Please allow microphone access", "system"); });
+
+    // Resolve the STT mode from the server. Server-side Whisper works in every
+    // browser and handles Egyptian dialect far better than the Web Speech API,
+    // but it needs MediaRecorder; without it we stay on the browser engine.
+    fetch('/config')
+      .then(r => r.json())
+      .then(cfg => {
+        const wanted = Boolean(cfg?.providers?.stt?.serverSide && cfg?.providers?.stt?.configured);
+        useServerStt = wanted && Boolean(window.MediaRecorder);
+        if (wanted && !window.MediaRecorder) {
+          console.warn('Server STT requested but MediaRecorder is unavailable; using browser recognition.');
+        }
+        console.log(`STT mode: ${useServerStt ? 'server (' + cfg.providers.stt.model + ')' : 'browser Web Speech API'}`);
+      })
+      .catch(() => { /* keep the browser engine if /config is unreachable */ });
 
   </script>
 </body>

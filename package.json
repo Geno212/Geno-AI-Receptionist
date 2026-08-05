@@ -1,20 +1,29 @@
 {
-  "name": "ai-receptionist-egypt",
+  "name": "geno-ai-receptionist",
   "version": "0.1.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "doctor": "node scripts/doctor.js",
+    "doctor:quick": "node scripts/doctor.js --quick",
+    "bench": "node bench/run-llm.js",
+    "bench:prompt": "node bench/run-prompt-size.js",
+    "bench:tts": "node bench/run-tts.js",
+    "bench:stt": "node bench/run-stt.js"
   },
   "dependencies": {
     "body-parser": "^1.20.2",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "ws": "^8.18.0",
-    "xmlbuilder2": "^3.1.1"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
+  },
+  "description": "El Sewedy Electric AI Receptionist - Egyptian Arabic + English",
+  "engines": {
+    "node": ">=18"
   }
 }

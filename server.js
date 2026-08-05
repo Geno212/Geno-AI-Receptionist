@@ -1,53 +1,40 @@
-// AI Egyptian Restaurant Receptionist
-// Twilio Media Streams <-> Azure Speech STT + TTS + LLM tool actions
-// Author: Generated scaffold
+// Geno - El Sewedy Electric AI Receptionist
+//
+// Browser -> WebSocket -> LLM -> TTS pipeline for Egyptian Arabic + English.
+// Provider backends (LLM/STT/TTS) are selected via .env, see lib/providers.js.
+// Full request flow: docs/ARCHITECTURE.md
+//
+// Legacy Twilio / Azure Speech / Google Cloud code lives in legacy/ and is not
+// loaded by this file.
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const bodyParser = require("body-parser");
-// TwiML will be produced by Twilio's helper library instead of xmlbuilder2
 const http = require("http");
 const WebSocket = require("ws");
-// const twilio = require("twilio");
-// const sdk = require("microsoft-cognitiveservices-speech-sdk");
+// Provider layer: LLM/STT backends are selected via .env, not code.
+const { callLLMWithFallback, transcribe, providerStatus } = require("./lib/providers");
+// Single source of truth for the system prompt, shared with bench/.
+const { buildSystemPrompt } = require("./lib/system-prompt");
 
 // ========== ENV ==========
 const PORT = process.env.PORT || 3000;
 const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 
-// TTS Configuration
-const TTS_PROVIDER = process.env.TTS_PROVIDER || "elevenlabs"; // "elevenlabs" or "azure"
-
-// Azure TTS
-const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY || "";
-const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || "eastus";
-// Suggested voices: "ar-EG-SalmaNeural" (Female), "ar-EG-ShakirNeural" (Male)
-const AZURE_TTS_VOICE = process.env.AZURE_TTS_VOICE || "ar-EG-SalmaNeural"; 
-const AZURE_TTS_STYLE = process.env.AZURE_TTS_STYLE || ""; // e.g., "cheerful"
-const AZURE_TTS_RATE = process.env.AZURE_TTS_RATE || "0.9";
-const AZURE_TTS_PITCH = process.env.AZURE_TTS_PITCH || "0Hz";
-
-// LLM
-const LLM_PROVIDER = process.env.LLM_PROVIDER || "openai";
-const LLM_BASE_URL = process.env.LLM_BASE_URL || "";
-const LLM_MODEL = process.env.LLM_MODEL || "";
-const LLM_API_KEY = process.env.LLM_API_KEY || "";
-const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || "";
-const CF_API_TOKEN = process.env.CF_API_TOKEN || "";
-const CF_MODEL = process.env.CF_MODEL || "@cf/meta/llama-3.1-8b-instruct";
+// TTS: "elevenlabs" (paid, hosted) or "local" (self-hosted MIT model on a GPU).
+// LLM/STT provider config lives in lib/providers.js.
+const TTS_PROVIDER = process.env.TTS_PROVIDER || "elevenlabs";
 
 // ElevenLabs
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || "";
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // Default voice
+const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
 
-// Telephony
-// const TWILIO_MEDIA_WS_PATH = "/ws";
-// const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
-// const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || "";
-// const TWILIO_NUMBER = process.env.TWILIO_NUMBER || "";
-// const twilioRest = (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) : null;
+// Self-hosted TTS (NAMAA-Egyptian-TTS / Chatterbox) - see tts-server/
+const TTS_LOCAL_URL = process.env.TTS_LOCAL_URL || "http://localhost:8020";
 
+
+const LOG_TRANSCRIPTS = (process.env.LOG_TRANSCRIPTS ?? "1") === "1";
 const GREETING_ON_START = (process.env.GREETING_ON_START ?? "1") === "1";
 const GREETING_TEXT = process.env.GREETING_TEXT || "أهلاً بك في السويدي إليكتريك. أنا جينو. Welcome to El Sewedy Electric. I am Geno. How can I help you? 你好，欢迎来到 Elsewedy Electric。";
 
@@ -138,13 +125,18 @@ function calculateCosineSimilarity(str1, str2) {
 
 // Check if two strings are similar (Hybrid Fuzzy Match: Levenshtein + Cosine)
 // Returns true if similarity >= threshold
-function isSimilar(str1, str2, threshold = 0.6) {
+function isSimilar(str1, str2, threshold = 0.6, label = null) {
   if (!str1 || !str2) return false;
   const s1 = str1.toLowerCase().trim();
   const s2 = str2.toLowerCase().trim();
   
   // 1. Exact or Substring match (Fast Path)
-  if (s1.includes(s2) || s2.includes(s1)) return true;
+  if (s1.includes(s2) || s2.includes(s1)) {
+    if (label) {
+      console.log(`[Fuzzy:${label}] '${s1}' vs '${s2}' -> Substring/Exact Match`);
+    }
+    return true;
+  }
 
   // 2. Hybrid Similarity Score
   const levDistance = calculateLevenshtein(s1, s2);
@@ -158,8 +150,8 @@ function isSimilar(str1, str2, threshold = 0.6) {
   
   // Debug if close to threshold or failed but had some similarity
   // Log all hybrid attempts that have some potential (>0.3) to see why they fail
-  if (hybridScore > 0.3) {
-     console.log(`[Fuzzy] '${s1}' vs '${s2}' -> Lev:${levSimilarity.toFixed(2)}, Cos:${cosineSimilarity.toFixed(2)}, Final:${hybridScore.toFixed(2)}`);
+  if (label || hybridScore > 0.3) {
+     console.log(`[Fuzzy${label ? ':' + label : ''}] '${s1}' vs '${s2}' -> Lev:${levSimilarity.toFixed(2)}, Cos:${cosineSimilarity.toFixed(2)}, Final:${hybridScore.toFixed(2)}`);
   }
 
   if (hybridScore >= threshold) return true;
@@ -182,7 +174,12 @@ function isSimilar(str1, str2, threshold = 0.6) {
        const partScore = Math.max(partLev, partCos);
        
        // Lower threshold for single word matching to handle variations like "Abdrahmane" vs "abdulrahman"
-       if (partScore >= 0.68) return true;
+       if (partScore >= 0.68) {
+         if (label) {
+            console.log(`[Fuzzy:${label}] Part Match '${p1}' vs '${p2}' -> Score:${partScore.toFixed(2)}`);
+         }
+         return true;
+       }
     }
   }
 
@@ -205,39 +202,21 @@ function placeReservation(db, { phone_e164, name, party_size, reserved_at }) {
 }
 
 // ========== LLM helper ==========
+// Delegates to lib/providers.js so the backend is an .env choice
+// (LLM_PROVIDER=groq|cerebras|gemini|openrouter|cloudflare) rather than code.
+//
+// LLM_FALLBACKS lets a throttled free tier hand off to another provider instead
+// of leaving the visitor in silence -- free tiers rate-limit without warning.
 async function callLLM(messages) {
-  try {
-    if (LLM_PROVIDER === "cloudflare") {
-      if (!CF_ACCOUNT_ID || !CF_API_TOKEN || !CF_MODEL) return null;
-      const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai/run/${encodeURI(CF_MODEL)}`, {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${CF_API_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ messages, temperature: 0.35, max_tokens: 256 })
-      });
-      if (!res.ok) {
-        let detail = ""; try { detail = await res.text(); } catch {}
-        throw new Error(`CF AI ${res.status} ${detail}`);
-      }
-      const data = await res.json();
-      return data?.result?.response || data?.result?.output_text || null;
-    } else {
-      if (!LLM_BASE_URL || !LLM_MODEL) return null;
-      const res = await fetch(`${LLM_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(LLM_API_KEY ? { Authorization: `Bearer ${LLM_API_KEY}` } : {}) },
-        body: JSON.stringify({ model: LLM_MODEL, temperature: 0.3, messages })
-      });
-      if (!res.ok) {
-        let detail = ""; try { detail = await res.text(); } catch {}
-        throw new Error(`LLM ${res.status} ${detail}`);
-      }
-      const data = await res.json();
-      return data?.choices?.[0]?.message?.content || null;
-    }
-  } catch (e) {
-    console.error("LLM error", e.message);
-    return null;
+  const { text, provider, error } = await callLLMWithFallback(messages, {
+    temperature: 0.35,
+    maxTokens: 256,
+  });
+  if (!text && error) console.error("LLM error", error.message);
+  else if (provider && provider !== (process.env.LLM_PROVIDER || "groq").toLowerCase()) {
+    console.warn(`[llm] served by fallback provider "${provider}"`);
   }
+  return text;
 }
 
 // ========== Express + Twilio Webhook (TwiML) ==========
@@ -246,32 +225,6 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// const SYSTEM_PROMPT = `أنت موظف استقبال لشركة السويدي إليكتريك.
-// تكلّم بلهجة مصرية مهذبة واحترافية.
-// جاوب على الأسئلة عن المنتجات والخدمات (كابلات، محولات، عدادات، مشاريع).
-// لا تكرر الترحيب في كل رد.
-// `;
-
-// app.post("/voice", (req, res) => {
-//   const wsUrl = (PUBLIC_URL.replace(/^http/, "ws") + TWILIO_MEDIA_WS_PATH);
-//   console.log(`[TwiML] /voice requested from ${req.ip}. Opening stream → ${wsUrl}`);
-//   const twiml = new twilio.twiml.VoiceResponse();
-//   const connect = twiml.connect();
-//   // Use inbound_track to receive caller audio only (avoids 31941 on accounts without bidirectional)
-//   connect.stream({ url: wsUrl, track: "inbound_track", name: "ai-eg-reception" });
-//   res.type("text/xml").send(twiml.toString());
-// });
-
-// app.post("/client-voice", (req, res) => {
-//   const wsUrl = (PUBLIC_URL.replace(/^http/, "ws") + TWILIO_MEDIA_WS_PATH);
-//   console.log(`[TwiML] /client-voice requested from ${req.ip}. Opening stream → ${wsUrl}`);
-//   const twiml = new twilio.twiml.VoiceResponse();
-//   const connect = twiml.connect();
-//   connect.stream({ url: wsUrl, track: "inbound_track", name: "ai-eg-reception" });
-//   res.type("text/xml").send(twiml.toString());
-// });
-
-// Approval Mock Route (In production, this would be a Teams Button click handler)
 app.get("/approve", (req, res) => {
   const id = req.query.id;
   const action = req.query.action || "approve"; // approve or reject
@@ -287,22 +240,58 @@ app.get("/approve", (req, res) => {
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
+// ========== Server-side STT (Groq Whisper) ==========
+// The browser's Web Speech API is Chrome-only and weak on Egyptian dialect.
+// This endpoint accepts a recorded audio blob and transcribes it via Groq's
+// free Whisper tier, which makes the receptionist work in any browser.
+//
+// The client posts raw audio bytes with the source mime type in Content-Type.
+// Kept as plain HTTP (not the WebSocket) because Whisper is utterance-based:
+// the client records until its VAD detects end-of-speech, then posts once.
+app.post(
+  "/stt",
+  express.raw({ type: () => true, limit: "25mb" }),
+  async (req, res) => {
+    const started = Date.now();
+    try {
+      if (!req.body || !req.body.length) {
+        return res.status(400).json({ ok: false, error: "empty audio body" });
+      }
+      // Whisper picks the decoder from the file extension, so map the browser's
+      // MediaRecorder mime type to a matching filename.
+      const mime = (req.get("content-type") || "").toLowerCase();
+      const ext = mime.includes("ogg") ? "ogg"
+        : mime.includes("mp4") || mime.includes("m4a") ? "m4a"
+        : mime.includes("mpeg") || mime.includes("mp3") ? "mp3"
+        : mime.includes("wav") ? "wav"
+        : "webm";
+
+      // `lang` may be "" to let Whisper auto-detect; default is Arabic because
+      // auto-detect flip-flops on short ar/en code-switched utterances.
+      const langParam = req.query.lang;
+      const language = langParam === "" || langParam === "auto" ? null : (langParam || "ar");
+
+      const { text, model } = await transcribe(req.body, { filename: `speech.${ext}`, language });
+      const latencyMs = Date.now() - started;
+      if (LOG_TRANSCRIPTS) console.log(`[stt] ${latencyMs}ms (${req.body.length}B ${ext}): ${text}`);
+      res.json({ ok: true, text, model, latencyMs });
+    } catch (e) {
+      const status = e?.status === 429 ? 429 : 500;
+      console.error("[stt] error", e.message);
+      res.status(status).json({ ok: false, error: e.message, quota: Boolean(e?.isQuota) });
+    }
+  }
+);
+
 // Minimal diagnostics (no secrets)
 app.get("/config", (req, res) => {
+  // Reports which backend each layer resolves to, so a misconfigured .env is
+  // visible without reading logs. Never includes key material.
   res.json({
     port: PORT,
     public_url: PUBLIC_URL,
-    llm_provider: LLM_PROVIDER,
-    llm_base_url: LLM_BASE_URL || null,
-    llm_model: LLM_MODEL || null,
-    cf_account_id: CF_ACCOUNT_ID ? (CF_ACCOUNT_ID.slice(0,4)+"…") : null,
-    cf_model: CF_MODEL || null,
-    // tts_voice: AZURE_TTS_VOICE,
-    // tts_style: AZURE_TTS_STYLE || null,
-    // tts_rate: AZURE_TTS_RATE || null,
-    // tts_pitch: AZURE_TTS_PITCH || null,
-    // stt_region: AZURE_SPEECH_REGION || null,
-    // stt_enabled: Boolean(AZURE_SPEECH_KEY && AZURE_SPEECH_REGION)
+    providers: providerStatus(),
+    prompt: { kb_mode: process.env.KB_MODE || "lean", chars: buildSystemPrompt().length },
   });
 });
 // Quick LLM test (no secrets in response)
@@ -321,126 +310,6 @@ app.post("/llm-test", async (req, res) => {
   }
 });
 
-// List available voices for current region/key
-// app.get("/voices", async (req, res) => {
-//   try {
-//     const endpoint = `https://${AZURE_SPEECH_REGION}.tts.speech.microsoft.com/cognitiveservices/voices/list`;
-//     const resp = await fetch(endpoint, {
-//       headers: {
-//         "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY,
-//         "User-Agent": "ai-receptionist-egypt"
-//       }
-//     });
-//     if (!resp.ok) {
-//       let detail = ""; try { detail = await resp.text(); } catch {}
-//       return res.status(500).json({ ok: false, error: `Azure voices ${resp.status} ${detail}` });
-//     }
-//     const voices = await resp.json();
-//     const ar = voices.filter(v => (v.Locale || v.LocaleName || "").toString().toLowerCase().includes("ar-eg"));
-//     res.json({ ok: true, count: voices.length, ar_eg: ar });
-//   } catch (e) {
-//     res.status(500).json({ ok: false, error: e?.message || String(e) });
-//   }
-// });
-
-// XML escape helper (top-level for routes that build SSML)
-// function escapeXml(s) {
-//   return String(s).replace(/[<>&'\"]/g, (c) => ({
-//     "<": "&lt;",
-//     ">": "&gt;",
-//     "&": "&amp;",
-//     "'": "&apos;",
-//     '"': "&quot;",
-//   })[c]);
-// }
-
-// function detectMainLanguage(text) {
-//   const arabicPattern = /[\u0600-\u06FF]/;
-//   return arabicPattern.test(text) ? "ar-EG" : "en-US";
-// }
-
-// function processTextForSSML(text, mainLang) {
-//   let escaped = escapeXml(text);
-//   if (mainLang === "ar-EG") {
-//     // Wrap emails in en-US to ensure correct pronunciation
-//     const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
-//     escaped = escaped.replace(emailRegex, '<lang xml:lang="en-US">$1</lang>');
-    
-//     // Wrap "El Sewedy Electric" to ensure English pronunciation
-//     escaped = escaped.replace(/(El Sewedy Electric)/gi, '<lang xml:lang="en-US">$1</lang>');
-//   }
-//   return escaped;
-// }
-
-// Top-level Azure TTS (robust): tries style on/off and multiple μ-law formats with voice + fallback
-// async function synthesizeWithAzureStandalone(text) {
-//   const endpoint = `https://${AZURE_SPEECH_REGION}.tts.speech.microsoft.com/cognitiveservices/v1`;
-//   const mainLang = detectMainLanguage(text);
-
-//   function buildSsml(voiceName, includeStyle) {
-//     const prosodyAttrs = [
-//       AZURE_TTS_RATE ? `rate=\"${AZURE_TTS_RATE}\"` : "",
-//       AZURE_TTS_PITCH ? `pitch=\"${AZURE_TTS_PITCH}\"` : "",
-//     ].filter(Boolean).join(" ");
-//     // Only apply style if language is Arabic (styles are voice-specific)
-//     const useStyle = includeStyle && AZURE_TTS_STYLE && mainLang === "ar-EG";
-//     const styleOpen = useStyle ? `<mstts:express-as style=\"${AZURE_TTS_STYLE}\">` : "";
-//     const styleClose = useStyle ? `</mstts:express-as>` : "";
-//     return `
-//       <speak version=\"1.0\" xml:lang=\"${mainLang}\" xmlns:mstts=\"https://www.w3.org/2001/mstts\">\n        <voice xml:lang=\"${mainLang}\" name=\"${voiceName}\">\n          <prosody ${prosodyAttrs}>\n            ${styleOpen}${processTextForSSML(text, mainLang)}${styleClose}\n          </prosody>\n        </voice>\n      </speak>
-//     `.trim();
-//   }
-
-//   async function postTts(ssml, format) {
-//     const res = await fetch(endpoint, {
-//       method: "POST",
-//       headers: {
-//         "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY,
-//         "X-Microsoft-OutputFormat": format,
-//         "Content-Type": "application/ssml+xml",
-//         "User-Agent": "ai-receptionist-egypt"
-//       },
-//       body: ssml
-//     });
-//     if (!res.ok) {
-//       let detail = ""; try { detail = await res.text(); } catch {}
-//       throw new Error(`Azure TTS ${res.status} ${detail}`);
-//     }
-//     const ab = await res.arrayBuffer();
-//     return Buffer.from(ab);
-//   }
-
-//   let voices;
-//   if (mainLang === "en-US") {
-//     voices = [AZURE_TTS_VOICE_EN];
-//   } else {
-//     voices = Array.from(new Set([AZURE_TTS_VOICE, AZURE_TTS_FALLBACK_VOICE].filter(Boolean)));
-//   }
-
-//   const formats = ["raw-8khz-8bit-mono-mulaw", "audio-8khz-8bit-mono-mulaw", "riff-8khz-8bit-mono-mulaw"];
-//   for (const v of voices) {
-//     for (const includeStyle of [Boolean(AZURE_TTS_STYLE), false]) {
-//       const ssml = buildSsml(v, includeStyle);
-//       for (const fmt of formats) {
-//         try { return await postTts(ssml, fmt); } catch { /* try next */ }
-//       }
-//     }
-//   }
-//   throw new Error("Azure TTS failed for all combinations");
-// }
-
-// Quick TTS check (validates Azure TTS creds/voice; returns size only)
-// app.get("/tts-test", async (req, res) => {
-//   const text = (req.query.text || "اختبار الصوت").toString();
-//   try {
-//     const buf = await synthesizeWithAzureStandalone(text);
-//     res.json({ ok: true, bytes: buf.length, voice: AZURE_TTS_VOICE, region: AZURE_SPEECH_REGION });
-//   } catch (e) {
-//     res.status(500).json({ ok: false, error: e?.message || String(e) });
-//   }
-// });
-
-// Extract raw μ-law payload from possible RIFF container
 function extractMulawPayload(buffer) {
   if (buffer && buffer.length >= 12 && buffer.toString("ascii", 0, 4) === "RIFF") {
     let offset = 12; // skip RIFF header
@@ -455,96 +324,16 @@ function extractMulawPayload(buffer) {
   return buffer;
 }
 
-// STT self-test: synthesize μ-law sample, convert to PCM16, and recognize once
-// app.get("/stt-test", async (req, res) => {
-//   const text = (req.query.text || "اختبار الصوت الآن").toString();
-//   try {
-//     const ttsBuf = await synthesizeWithAzureStandalone(text);
-//     const mulawBuf = extractMulawPayload(ttsBuf);
-//     const u8 = new Uint8Array(mulawBuf.buffer, mulawBuf.byteOffset, mulawBuf.byteLength);
-//     const linear16 = mulawToLinear16(u8);
-//     const pcm = Buffer.from(linear16.buffer);
-
-//     const speechConfig = sdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
-//     speechConfig.speechRecognitionLanguage = "ar-EG";
-//     speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_PostProcessingOption, "TrueText");
-
-//     const pushStream = sdk.AudioInputStream.createPushStream(
-//       sdk.AudioStreamFormat.getWaveFormatPCM(8000, 16, 1)
-//     );
-//     pushStream.write(pcm);
-//     pushStream.close();
-//     const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
-//     const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
-//     const result = await new Promise((resolve, reject) => {
-//       recognizer.recognizeOnceAsync(
-//         r => { try { recognizer.close(); } catch {} resolve(r); },
-//         err => { try { recognizer.close(); } catch {} reject(err); }
-//       );
-//     });
-//     res.json({ ok: true, provided_text: text, recognized_text: result?.text || null });
-//   } catch (e) {
-//     res.status(500).json({ ok: false, error: e?.message || String(e) });
-//   }
-// });
-
-// app.get("/token", (req, res) => {
-//   if (!TWILIO_ACCOUNT_SID || !TWILIO_API_KEY_SID || !TWILIO_API_KEY_SECRET || !TWILIO_TWIML_APP_SID) {
-//     return res.status(500).json({ error: "Twilio client env vars missing" });
-//   }
-//   const identity = (req.query.identity || TWILIO_CLIENT_IDENTITY).toString();
-//   const AccessToken = twilio.jwt.AccessToken;
-//   const VoiceGrant = AccessToken.VoiceGrant;
-//   const token = new AccessToken(TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, { identity, ttl: 3600 });
-//   const voiceGrant = new VoiceGrant({ outgoingApplicationSid: TWILIO_TWIML_APP_SID, incomingAllow: true });
-//   token.addGrant(voiceGrant);
-//   res.json({ identity, token: token.toJwt() });
-// });
-
-// Trigger an outbound call so Twilio calls your phone and connects to the AI stream
-// Body: { "to": "+2010..." }
-// app.post("/call", async (req, res) => {
-//   try {
-//     const to = (req.body?.to || "").toString();
-//     if (!to) return res.status(400).json({ error: "Missing 'to' E.164 number" });
-//     if (!twilioRest || !TWILIO_NUMBER) return res.status(500).json({ error: "Twilio outbound env vars missing" });
-//     const call = await twilioRest.calls.create({
-//       to,
-//       from: TWILIO_NUMBER,
-//       // When the call is answered, Twilio fetches TwiML from here, which opens the media stream
-//       url: `${PUBLIC_URL.replace(/\/$/, "")}/voice`
-//     });
-//     res.json({ sid: call.sid, to });
-//   } catch (e) {
-//     res.status(500).json({ error: e.message });
-//   }
-// });
 
 const server = http.createServer(app);
 
 // ========== WebSocket (bidirectional) ==========
 // Handle both Twilio (/ws) and Browser (/client-ws)
 const wss = new WebSocket.Server({ server });
+// ws re-emits the http server's listen errors; without this the EADDRINUSE
+// handler above is bypassed and node crashes with a raw stack trace.
+wss.on("error", handleListenError);
 
-// μ-law decode table
-// const MULAW_DECODE_TABLE = (() => {
-//   const BIAS = 0x84;
-//   const table = new Int16Array(256);
-//   for (let i = 0; i < 256; i++) {
-//     let mu = ~i & 0xff;
-//     let t = ((mu & 0x0F) << 3) + BIAS;
-//     t <<= ((mu & 0x70) >> 4);
-//     let s = (mu & 0x80) ? (BIAS - t) : (t - BIAS);
-//     table[i] = s;
-//   }
-//   return table;
-// })();
-
-// function mulawToLinear16(u8arr) {
-//   const out = new Int16Array(u8arr.length);
-//   for (let i = 0; i < u8arr.length; i++) out[i] = MULAW_DECODE_TABLE[u8arr[i]];
-//   return out;
-// }
 
 wss.on("connection", (ws, req) => {
   const url = req.url;
@@ -561,89 +350,17 @@ wss.on("connection", (ws, req) => {
 
 function handleBrowserConnection(ws) {
   const db = loadDB();
+  const confirmedMeetings = new Set(); // Track confirmed meetings to prevent re-checking
   
   const info = db.company_info || {};
-  const dynamicPrompt = `You are Geno, the AI Receptionist for ${info.name || "El Sewedy Electric"}.
-  
-  Company Info (Knowledge Base):
-  ${JSON.stringify(info, null, 2)}
-
-  Instructions:
-  1. **Identity**: Your name is Geno. You are helpful, polite, and professional.
-  2. **Language Detection**: Listen to the user. 
-     - If English -> Reply in English.
-     - If Arabic -> Reply in Egyptian Arabic (Massry).
-     - If Japanese -> Reply in Japanese.
-     - If Chinese -> Reply in Chinese (Mandarin).
-     - If other -> Reply in that language.
-     - **CRITICAL**: When asking for missing information (Name, Phone, Email), you MUST ask in the SAME language the user is speaking. Do NOT switch to English.
-     - **CONSISTENCY**: Maintain the conversation language. Do NOT switch languages unless the user explicitly switches.
-  3. **No Repetition**: 
-     - Do NOT repeat greetings (Hello, Welcome, "I am Geno") in every turn. Only greet once at the start.
-     - **Do NOT** start your response with the user's name.
-     - **Do NOT** repeat the user's name in every sentence. Use it very sparingly or not at all after the first time.
-  4. **Brevity**: Keep your responses extremely short and concise (max 1-2 sentences). Do not lecture.
-  5. **Intelligent Data Presentation**: 
-     - You have access to the 'Company Info' JSON above.
-     - **Do NOT** read raw JSON, keys, or structure.
-     - **Translate & Adapt**: Always present the information in the user's current language and cultural context.
-       - *Hours Example (English)*: "We are open Sunday through Thursday, 9 AM to 5 PM."
-       - *Hours Example (Arabic)*: "مواعيد العمل عندنا من الأحد للخميس، من 9 الصبح لـ 5 المغرب."
-     - **Lists**: When listing products/services, mention 2-3 key items naturally and ask if they want more details. Do not list everything at once.
-     - **News**: Summarize 'recent_news' naturally as if telling a story.
-  6. **Meeting Verification**:
-     - If the user says they have a meeting or appointment, ask for their **Name** and **Company** (if not known) and **Who they are meeting with**.
-     - **CRITICAL**: If the user says "I have a meeting", your IMMEDIATE next response MUST be to ask for the missing details (e.g., "Who are you meeting with?"). Do NOT wait.
-     - **CRITICAL**: Do NOT output the \`check_meeting\` tool until you have ALL THREE pieces of information (Visitor Name, Company, Host Name).
-     - **Company Name**: If the user has not provided a company name, ASK for it. Do NOT assume "Unknown" or guess. Do not call the tool.
-     - **Host Name**: Output the Host Name EXACTLY as the user said it. Do NOT autocomplete, guess, or use names from the 'Company Info' or 'leadership' list unless the user explicitly said so. If they said "Abdrahman", output "Abdrahman".
-     - If any info is missing, ASK for it first. Do NOT call the tool with empty strings.
-     - **CONFIRMATION**: Before outputting the \`check_meeting\` tool, you MUST confirm the collected details with the user.
-       - English Ask: "Just to confirm, you are [Name] from [Company] meeting [Host]. Is that correct?"
-       - Arabic Ask: "عشان أتأكد، حضرتك [الاسم] من شركة [الشركة] وهتقابل [اسم المضيف]؟ صح كده؟"
-       - **STOP**: Do NOT output the tool JSON in the same response as this question. Wait for the user to answer "Yes".
-       - If the user corrects you, update your info and ask again.
-     - Once confirmed, output the tool JSON \`check_meeting\` IMMEDIATELY.
-     - **Do NOT** say "I will check". Just output the tool. The system will handle the "Checking..." message and hold music.
-  7. **Lead Generation**: 
-     - If the user expresses interest in products/services, you **MUST** collect their **Name**, **Phone Number**, and **Company Name**.
-     - **CONFIRMATION**: Before outputting the \`save_lead\` tool, you MUST confirm the collected details with the user.
-       - English Ask: "I have your name as [Name], phone [Phone], and company [Company]. Is that correct?"
-       - Arabic Ask: "تمام يا [الاسم]، بياناتك عندي: رقم التليفون [الرقم] والشركة [الشركة]. البيانات دي صحيحة؟"
-       - Only output the tool JSON if the user confirms.
-     - **Do NOT** end the conversation or say goodbye until you have all three pieces of information.
-     - If the user provides only some info, ask for the rest in the **current conversation language**.
-     - Once you have all info, output the tool JSON **IMMEDIATELY** at the start of your response.
-     - **HALLUCINATION WARNING**: Do NOT invent or guess information.
-       - NEVER use "John Doe" or "123456789" or "Unknown" unless the user explicitly said them.
-       - If you don't have the info, ASK the user. Do NOT call the tool.
-  
-  **STRICT OUTPUT FORMAT**:
-  - Do NOT output the tool JSON unless you have ALL required fields.
-  - **NEVER** speak the words "Tool Format", "JSON", "name", "phone", or "company" in English when the user is speaking Arabic.
-  - **NEVER** switch to Arabic when the user is speaking English, even if their name is Arabic.
-  - **NEVER** switch languages mid-sentence or mid-response.
-  - **NEVER** output text like "(Tool Format: ...)" or "Here is the JSON".
-  - **NEVER** use parentheses "(...)" to give instructions or ask for info in English if the conversation is in Arabic.
-  - **Spoken Terms**: When speaking in Arabic, ALWAYS translate technical terms (like 'Cables', 'Wires', 'Private Cables') to Arabic (e.g. 'كابلات', 'أسلاك', 'كابلات خاصة') in your response, even if you save them in English in the tool.
-  - Just output the <tool>...</tool> block if ready, followed by your natural language response.
-  - **DATA FORMAT**: When saving the lead, **ALWAYS** transliterate Arabic names to English (e.g., "Ahmed" instead of "أحمد").
-   - **ONE-TIME SAVE**: Only output the <tool> block ONCE when you first collect the full info. 
-   - **STOP CONDITION**: After you have successfully output the <tool> block once, do NOT output it again for the rest of the conversation.
-   - **EXCEPTION**: Only output the <tool> block again if the user EXPLICITLY asks to "change", "update", or "correct" their information.
-   - If the user asks normal questions (e.g. "What is the news?", "Tell me about X"), just answer them. DO NOT output the tool block.
-   - **CRITICAL**: If the user asks a question and you have already saved their lead info, DO NOT output \`save_lead\` again. Just answer the question.
-
-  **EXAMPLES OF ASKING FOR INFO**:
-  - English: "Could I please have your name, phone number, and company name to assist you further?"
-  - Arabic: "ممكن الاسم ورقم التليفون واسم الشركة عشان أقدر أساعدك؟"
-  - Japanese: "お客様のお名前、電話番号、会社名を教えていただけますか？"
-  - Chinese: "请告诉我您的姓名、电话号码和公司名称，以便我为您提供帮助。"
-
-  Tool Schemas:
-  <tool>{"name":"save_lead","args":{"name":"John Doe","phone":"+123456789","company":"El Sewedy Inc","interest":"Cables"}}</tool>
-  <tool>{"name":"check_meeting","args":{"visitor_name":"John Smith","visitor_company":"Microsoft","host_name":"Ahmed Sadek"}}</tool>
-`;
+  // System prompt now comes from lib/system-prompt.js -- the same module the
+  // benchmark scores, so bench and production can never drift apart.
+  //
+  // KB_MODE=lean (default) trims db.json's company_info from ~5,461 chars to
+  // ~2,100 by dropping embedded LinkedIn work histories from key_contacts.
+  // Measured 10/10 on the behavioural suite at 34% fewer tokens, which matters
+  // because the prompt is resent every turn against Groq's 12k tokens/minute cap.
+  const dynamicPrompt = buildSystemPrompt();
 
   const convo = [ { role: "system", content: dynamicPrompt } ];
 
@@ -682,7 +399,9 @@ function handleBrowserConnection(ws) {
     const llm = await callLLM(convo);
     console.log("LLM Raw Output:", llm); // Debug log
     
-    let reply = llm;
+    // Clean up DeepSeek/R1 thinking tags
+    let reply = (llm || "").replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    
     if (!reply) {
       // Smart fallback based on user's input language
       if (/[\u0600-\u06FF]/.test(text)) {
@@ -815,23 +534,22 @@ function handleBrowserConnection(ws) {
             }
           }
         } else if (action?.name === "check_meeting") {
-          let { visitor_name, visitor_company, host_name } = action.args || {};
+          let { visitor_name, visitor_company, host_name, host_company, department } = action.args || {};
 
           // Auto-fill from last collected info if missing
           if (!visitor_name && lastCollectedInfo?.name) visitor_name = lastCollectedInfo.name;
           if (!visitor_company && lastCollectedInfo?.company) visitor_company = lastCollectedInfo.company;
 
-          // Loop prevention: If we are already waiting for approval for this exact meeting, skip tool logic
-          if (waitingForApproval && 
-              lastCollectedInfo.visitor_name === visitor_name && 
-              lastCollectedInfo.host_name === host_name) {
-             console.log("ℹ️ Skipping redundant check_meeting (already waiting).");
+          // Loop prevention: If we are already waiting for approval or confirmed, skip
+          const meetingKey = `${visitor_name}|${host_name}`;
+          if (waitingForApproval || confirmedMeetings.has(meetingKey)) {
+             console.log("ℹ️ Skipping redundant check_meeting (already waiting or confirmed).");
              // Do NOT overwrite 'reply' here, let the LLM's natural text response stand
           } else {
               // Helper to check for invalid/placeholder strings
               const isInvalid = (str) => !str || str.trim().length < 2 || str.trim() === "?" || str.toLowerCase() === "unknown";
     
-              if (isInvalid(visitor_name) || isInvalid(host_name) || isInvalid(visitor_company)) {
+              if (isInvalid(visitor_name) || isInvalid(host_name) || isInvalid(visitor_company) || isInvalid(host_company) || isInvalid(department)) {
                  // Dynamic missing info prompt
                  let missing = [];
                  const isAr = /[\u0600-\u06FF]/.test(text) || /[\u0600-\u06FF]/.test(reply);
@@ -839,6 +557,8 @@ function handleBrowserConnection(ws) {
                  if (isInvalid(visitor_name)) missing.push(isAr ? "اسمك" : "your name");
                  if (isInvalid(visitor_company)) missing.push(isAr ? "اسم شركتك" : "your company name");
                  if (isInvalid(host_name)) missing.push(isAr ? "اسم الشخص اللي هتقابله" : "who you are meeting with");
+                 if (isInvalid(host_company)) missing.push(isAr ? "شركة المضيف" : "host company");
+                 if (isInvalid(department)) missing.push(isAr ? "القسم" : "department");
                  
                  if (missing.length > 0) {
                      const list = missing.join(isAr ? " و " : " and ");
@@ -847,12 +567,12 @@ function handleBrowserConnection(ws) {
                        : `Could you please tell me ${list} to proceed?`;
                  } else {
                      reply = isAr 
-                       ? `ممكن اسم الشركة عشان أقدر أساعدك؟` 
-                       : `Could you please provide your company name to proceed?`;
+                       ? `ممكن بيانات الاجتماع كاملة عشان أقدر أساعدك؟` 
+                       : `Could you please provide full meeting details to proceed?`;
                  }
-                 // Skip processing logic if data is missing or company is unknown
+                 // Skip processing logic if data is missing
               } else {
-                console.log("🔍 Checking meeting:", { visitor_name, visitor_company, host_name });
+                console.log("🔍 Checking meeting:", { visitor_name, visitor_company, host_name, host_company, department });
                 
                 // Fuzzy match logic
                 const meetings = db.meetings || [];
@@ -880,31 +600,43 @@ function handleBrowserConnection(ws) {
                 if (!bestMatch) {
                   for (const m of meetings) {
                      // Visitor Name
-                     const vNameMatch = isSimilar(m.visitor_name, visitor_name, 0.6);
+                     const vNameMatch = isSimilar(m.visitor_name, visitor_name, 0.6, "VName");
                      
-                     // Company
+                     // Visitor Company
                      let vCompMatch = true;
                      if (visitor_company && m.visitor_company) {
-                       vCompMatch = isSimilar(m.visitor_company, visitor_company, 0.5);
+                       vCompMatch = isSimilar(m.visitor_company, visitor_company, 0.5, "VComp");
                      }
-    
+
                      // Host Name Matching
                      // Use isSimilar which includes Levenshtein + Cosine Hybrid logic
-                     const hNameMatch = isSimilar(m.host_name, host_name, 0.6);
-                     
-                     const lenRatio = host_name.length / m.host_name.length;
-                     
-                     // Debug log - hNameMatch uses the new hybrid logic!
-                     console.log(`Checking: ${m.visitor_name} vs ${visitor_name} (${vNameMatch}), ${m.host_name} vs ${host_name} (Match:${hNameMatch}, LenRatio:${lenRatio.toFixed(2)})`);
-    
-                     if (vNameMatch && vCompMatch && hNameMatch) {
-                       if (lenRatio < 0.6) {
-                          partialMatch = m;
-                       } else {
-                          bestMatch = m; 
-                          break;
-                       }
+                     const hNameMatch = isSimilar(m.host_name, host_name, 0.6, "HName");
+
+                     // Host Company
+                     let hCompMatch = true;
+                     if (host_company && m.host_company) {
+                        hCompMatch = isSimilar(m.host_company, host_company, 0.5, "HComp");
                      }
+
+                     // Department
+                     let deptMatch = true;
+                     if (department && m.department) {
+                        deptMatch = isSimilar(m.department, department, 0.5, "Dept");
+                     }
+                 
+                 const lenRatio = host_name.length / m.host_name.length;
+                 
+                 // Debug log - hNameMatch uses the new hybrid logic!
+                 console.log(`Checking: ${m.visitor_name} vs ${visitor_name} (${vNameMatch}), ${m.host_name} vs ${host_name} (Match:${hNameMatch}), VComp:${vCompMatch}, HComp:${hCompMatch}, Dept:${deptMatch}`);
+
+                 if (vNameMatch && vCompMatch && hNameMatch && hCompMatch && deptMatch) {
+                   if (lenRatio < 0.6) {
+                      partialMatch = m;
+                   } else {
+                      bestMatch = m; 
+                      break;
+                   }
+                 }
                   }
                 }
     
@@ -963,6 +695,8 @@ function handleBrowserConnection(ws) {
                      }
     
                      if (status === "approved") {
+                       // Mark as confirmed to prevent future re-checks
+                       confirmedMeetings.add(`${visitor_name}|${host_name}`);
                        notification = /[\u0600-\u06FF]/.test(reply) ? 
                          `أستاذ ${bestMatch.host_name} أكد الميعاد. تقدر تتفضل دلوقتي. ${timeMsg}` : 
                          `Mr. ${bestMatch.host_name} has confirmed. You may proceed. ${timeMsg}`;
@@ -1104,8 +838,8 @@ function handleBrowserConnection(ws) {
         // Enqueue the TTS generation and sending
         audioQueue.push(async () => {
             try {
-                if (TTS_PROVIDER === "azure") {
-                    await speakAzure(text);
+                if (TTS_PROVIDER === "local") {
+                    await speakLocal(text);
                 } else {
                     await speakElevenLabs(text);
                 }
@@ -1122,7 +856,21 @@ function handleBrowserConnection(ws) {
     let processed = text;
 
     if (mainLang === "ar-EG") {
-      // No complex regex for Arabic yet, but can add here
+      // Convert 24h time (HH:mm) to Arabic 12h format
+      processed = processed.replace(/\b(\d{1,2}):(\d{2})\b/g, (match, h, m) => {
+        let hour = parseInt(h);
+        const min = parseInt(m);
+        let suffix = "صباحاً";
+        
+        if (hour >= 12) {
+          suffix = "مساءً";
+          if (hour > 12) hour -= 12;
+        }
+        if (hour === 0) hour = 12;
+        
+        const minStr = min === 0 ? "" : ` و ${min}`;
+        return `${hour}${minStr} ${suffix}`;
+      });
     } else {
       // English Normalization
       
@@ -1134,13 +882,6 @@ function handleBrowserConnection(ws) {
         // Simple map for first part
         const prefixes = { "19": "nineteen", "20": "twenty" };
         
-        // For second part (00-99), we can rely on TTS reading "thirty-eight" for "38"
-        // So "nineteen 38" works for most TTS engines to say "nineteen thirty eight"
-        // BUT to be safe, we can convert small numbers too if we want, or just let it be.
-        // Azure usually handles "nineteen 38" correctly.
-        
-        // However, we must be careful not to break logic.
-        // Let's return words if we are sure.
         return `${prefixes[p1]} ${p2}`; 
       });
 
@@ -1168,7 +909,7 @@ function handleBrowserConnection(ws) {
         // If it starts with 0 or +, treat as phone even if short (e.g. 010, 01554)
         if (match.trim().startsWith('0') || match.trim().startsWith('+')) {
              // Add commas between digits to slow down TTS reading
-            // let spaced = match.split('').map(c => /\d/.test(c) ? `${c}, ` : c).join('');
+            let spaced = match.split('').map(c => /\d/.test(c) ? `${c}, ` : c).join('');
              
              // For Arabic, convert English digits to Arabic words to ensure correct pronunciation
              if (mainLang === "ar-EG") {
@@ -1205,69 +946,58 @@ function handleBrowserConnection(ws) {
     return processed;
   }
 
-  async function speakAzure(text) {
+  /**
+   * Self-hosted TTS (NAMAA-Egyptian-TTS for Arabic / Chatterbox for English).
+   *
+   * Requires the sidecar in tts-server/ running on a GPU (~8GB VRAM).
+   * Unlike ElevenLabs this is NOT streaming: the model synthesizes a whole
+   * utterance, so the first byte arrives only when synthesis completes. We
+   * still chunk the send so the client's playback path is identical.
+   *
+   * The sidecar returns WAV; we strip the header and forward raw PCM to honour
+   * the client contract (PCM 24kHz / 16-bit / mono / LE, then {type:'tts_end'}).
+   */
+  async function speakLocal(text) {
     try {
-      if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) throw new Error("No Azure Speech Key/Region");
+      const lang = /[؀-ۿ]/.test(text) ? "ar" : "en";
+      const ttsText = processTextForSpeech(preprocessTextForElevenLabs(text), lang === "ar" ? "ar-EG" : "en-US");
 
-      const endpoint = `https://${AZURE_SPEECH_REGION}.tts.speech.microsoft.com/cognitiveservices/v1`;
-      
-      const isArabic = /[\u0600-\u06FF]/.test(text);
-      // Determine correct ISO language code for SSML
-      let langCode = "en-US";
-      if (AZURE_TTS_VOICE.startsWith("ar-")) {
-        langCode = "ar-EG";
-      } else if (AZURE_TTS_VOICE.toLowerCase().includes("multilingual") && isArabic) {
-        langCode = "ar-EG";
-      }
-
-      // Normalize Text (Dates, Times, Phones)
-      const normalizedText = processTextForSpeech(text, langCode);
-
-      const escapedText = normalizedText.replace(/&/g, '&amp;')
-                              .replace(/</g, '&lt;')
-                              .replace(/>/g, '&gt;')
-                              .replace(/"/g, '&quot;')
-                              .replace(/'/g, '&apos;');
-
-      // Simple SSML build
-      const ssml = `
-        <speak version="1.0" xml:lang="${langCode}">
-          <voice xml:lang="${langCode}" name="${AZURE_TTS_VOICE}">
-            <prosody rate="${AZURE_TTS_RATE}" pitch="${AZURE_TTS_PITCH}">
-              ${escapedText}
-            </prosody>
-          </voice>
-        </speak>
-      `.trim();
-      // ... rest of the logic ...
-
-      const response = await fetch(endpoint, {
+      const response = await fetch(`${TTS_LOCAL_URL.replace(/\/$/, "")}/synthesize`, {
         method: "POST",
-        headers: {
-          "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY,
-          "Content-Type": "application/ssml+xml",
-          "X-Microsoft-OutputFormat": "raw-24khz-16bit-mono-pcm",
-          "User-Agent": "ai-receptionist-egypt"
-        },
-        body: ssml
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: ttsText, language: lang, sample_rate: 24000 })
       });
 
       if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`Azure TTS ${response.status}: ${err}`);
+        const err = await response.text().catch(() => "");
+        throw new Error(`Local TTS ${response.status}: ${err.slice(0, 200)}`);
       }
 
-      // Stream audio chunks to client
-      const reader = response.body.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        ws.send(value); // Send raw PCM chunk
+      const buf = Buffer.from(await response.arrayBuffer());
+
+      // Strip the RIFF header if present; the client expects bare PCM frames.
+      let pcm = buf;
+      if (buf.length > 44 && buf.toString("ascii", 0, 4) === "RIFF") {
+        let off = 12;
+        while (off + 8 <= buf.length) {
+          const id = buf.toString("ascii", off, off + 4);
+          const size = buf.readUInt32LE(off + 4);
+          if (id === "data") { pcm = buf.subarray(off + 8, off + 8 + size); break; }
+          off += 8 + size + (size % 2);
+        }
+      }
+
+      // Send in ~20ms frames so playback scheduling matches the streaming path.
+      const FRAME = 960 * 2;
+      for (let i = 0; i < pcm.length; i += FRAME) {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        ws.send(pcm.subarray(i, Math.min(i + FRAME, pcm.length)));
       }
       ws.send(JSON.stringify({ type: 'tts_end' }));
-
     } catch (e) {
-      console.error("Azure TTS error", e);
+      console.error("Local TTS error", e.message);
+      // Signal end-of-utterance so the client does not hang waiting for audio.
+      try { ws.send(JSON.stringify({ type: 'tts_end' })); } catch {}
     }
   }
 
@@ -1327,220 +1057,34 @@ function handleBrowserConnection(ws) {
   if (GREETING_ON_START) speak(GREETING_TEXT);
 }
 
-// function handleTwilioConnection(ws) {
-//   console.log("Twilio connected");
-//   const db = loadDB();
-//   const convo = [ { role: "system", content: SYSTEM_PROMPT } ];
-//   const caller = { phone: null };
-//   let streamSid = null; // Twilio stream identifier needed for outbound audio
 
-//   let azurePushStream = null; // Azure STT push stream
-//   let azureRecognizer = null; // Azure STT recognizer
-//   const useAzureSTT = false;
+// A port clash is the most common first-run failure on a new machine, and the
+// raw EADDRINUSE stack trace does not say what to do about it.
+//
+// The listener must be attached to BOTH the http server and the WebSocketServer:
+// `ws` attaches to the same http server and re-emits its errors, so handling
+// only one of them still leaves an unhandled 'error' event that crashes the
+// process with a stack trace.
+function handleListenError(err) {
+  if (err.code === "EADDRINUSE") {
+    console.error(`\nPort ${PORT} is already in use.`);
+    console.error(`  - another Geno instance may still be running, or`);
+    console.error(`  - start on a different port:  PORT=3001 npm start\n`);
+    process.exit(1);
+  }
+  console.error("Server error:", err);
+  process.exit(1);
+}
+server.on("error", handleListenError);
 
-//   async function startSpeechStream() {
-    // if (useAzureSTT) {
-    //   if (azureRecognizer) return;
-    //   try {
-    //     const speechConfig = sdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
-    //     speechConfig.speechRecognitionLanguage = "ar-EG";
-    //     speechConfig.setProperty(sdk.PropertyId.SpeechServiceResponse_PostProcessingOption, "TrueText");
-
-    //     azurePushStream = sdk.AudioInputStream.createPushStream(
-    //       sdk.AudioStreamFormat.getWaveFormatPCM(8000, 16, 1)
-    //     );
-    //     const audioConfig = sdk.AudioConfig.fromStreamInput(azurePushStream);
-    //     // Use the configured speechConfig so properties (e.g., TrueText) apply
-    //     azureRecognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
-    //     azureRecognizer.speechRecognitionLanguage = "ar-EG";
-
-    //     azureRecognizer.recognizing = async (_s, e) => {
-    //       const text = e?.result?.text?.trim();
-    //       if (!text) return;
-    //       if (process.env.LOG_TRANSCRIPTS) console.log("STT PART", text);
-    //     };
-
-    //     azureRecognizer.recognized = async (_s, e) => {
-    //       const text = e?.result?.text?.trim();
-    //       if (!text) return;
-    //       if (process.env.LOG_TRANSCRIPTS) console.log("STT FINAL", text);
-    //       await handleFinalTranscript(text);
-    //     };
-
-    //     azureRecognizer.canceled = (_s, e) => {
-    //       console.error("Azure STT canceled", e?.errorDetails || e?.reason || "");
-    //     };
-    //     azureRecognizer.sessionStopped = () => {
-    //       if (process.env.LOG_TRANSCRIPTS) console.log("Azure STT session stopped");
-    //     };
-
-    //     azureRecognizer.startContinuousRecognitionAsync();
-    //   } catch (err) {
-    //     console.error("Azure STT init error", err?.message || err);
-    //   }
-    // }
-  // }
-
-  // async function handleFinalTranscript(text) {
-  //   convo.push({ role: "user", content: text });
-  //   const llm = await callLLM(convo);
-  //   let reply = llm || "تمام، تحت أمرك";
-
-  //   // Parse optional <tool>{...}</tool>
-  //   const m = reply.match(/<tool>([\s\S]*?)<\/tool>/);
-  //   if (m) {
-  //     try {
-  //       const action = JSON.parse(m[1]);
-  //       if (action?.name === "place_reservation") {
-  //         const { name, phone, party_size, iso_datetime } = action.args || {};
-  //         const when = Date.parse(iso_datetime);
-  //         const r = placeReservation(db, { phone_e164: phone || caller.phone || "+201000000000", name: name || "ضيف", party_size: Number(party_size)||2, reserved_at: when || (Date.now()+3600000) });
-  //         reply = reply.replace(m[0], "");
-  //         reply = `اتأكد الحجز. ${reply.trim()}`;
-  //         if (process.env.LOG_TRANSCRIPTS) console.log("Reservation stored", r);
-  //       }
-  //     } catch (e) { console.warn("Bad tool JSON"); }
-  //   }
-
-  //   convo.push({ role: "assistant", content: reply });
-  //   await speak(reply);
-  // }
-
-  // async function speak(text) {
-  //   try {
-  //     if (!streamSid) {
-  //       console.warn("No streamSid yet; cannot send audio to Twilio.");
-  //       return;
-  //     }
-  //     // const buf = await synthesizeWithAzureRobust(text);
-
-  //     // Optional: clear any pending audio on Twilio side
-  //     try { ws.send(JSON.stringify({ event: "clear", streamSid })); } catch {}
-
-  //     // Send μ-law 8k audio back in small frames; chunk on binary boundaries then base64-encode per frame
-  //     // const frameSizeBytes = 160; // 20ms at 8kHz μ-law
-  //     // for (let i = 0; i < buf.length; i += frameSizeBytes) {
-  //     //   const frame = buf.subarray(i, i + frameSizeBytes);
-  //     //   const b64 = frame.toString("base64");
-  //     //   ws.send(JSON.stringify({ event: "media", streamSid, media: { payload: b64 } }));
-  //     // }
-  //     ws.send(JSON.stringify({ event: "mark", streamSid, mark: { name: "tts_done" } }));
-  //   } catch (e) {
-  //     console.error("TTS error", e.message);
-  //   }
-  // }
-
-  // Robust TTS: tries with/without style and multiple mulaw formats
-  // async function synthesizeWithAzureRobust(text) {
-  //   const endpoint = `https://${AZURE_SPEECH_REGION}.tts.speech.microsoft.com/cognitiveservices/v1`;
-  //   const mainLang = detectMainLanguage(text);
-
-  //   function buildSsml(voiceName, includeStyle) {
-  //     const prosodyAttrs = [
-  //       AZURE_TTS_RATE ? `rate=\"${AZURE_TTS_RATE}\"` : "",
-  //       AZURE_TTS_PITCH ? `pitch=\"${AZURE_TTS_PITCH}\"` : "",
-  //     ].filter(Boolean).join(" ");
-  //     const useStyle = includeStyle && AZURE_TTS_STYLE && mainLang === "ar-EG";
-  //     const styleOpen = useStyle ? `<mstts:express-as style=\"${AZURE_TTS_STYLE}\">` : "";
-  //     const styleClose = useStyle ? `</mstts:express-as>` : "";
-  //     return `
-  //       <speak version=\"1.0\" xml:lang=\"${mainLang}\" xmlns:mstts=\"https://www.w3.org/2001/mstts\">\n          <voice xml:lang=\"${mainLang}\" name=\"${voiceName}\">\n            <prosody ${prosodyAttrs}>\n              ${styleOpen}${processTextForSSML(text, mainLang)}${styleClose}\n            </prosody>\n          </voice>\n        </speak>
-  //     `.trim();
-  //   }
-
-  //   let voices;
-  //   if (mainLang === "en-US") {
-  //     voices = [AZURE_TTS_VOICE_EN];
-  //   } else {
-  //     voices = Array.from(new Set([AZURE_TTS_VOICE, AZURE_TTS_FALLBACK_VOICE].filter(Boolean)));
-  //   }
-
-  //   const formats = ["raw-8khz-8bit-mono-mulaw", "audio-8khz-8bit-mono-mulaw", "riff-8khz-8bit-mono-mulaw"];
-  //   let lastErr = null;
-  //   for (const v of voices) {
-  //     for (const includeStyle of [Boolean(AZURE_TTS_STYLE), false]) {
-  //       const ssml = buildSsml(v, includeStyle);
-  //       for (const fmt of formats) {
-  //         try {
-  //           const res = await fetch(endpoint, {
-  //             method: "POST",
-  //             headers: {
-  //               "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY,
-  //               "X-Microsoft-OutputFormat": fmt,
-  //               "Content-Type": "application/ssml+xml",
-  //               "User-Agent": "ai-receptionist-egypt"
-  //             },
-  //             body: ssml
-  //           });
-  //           if (!res.ok) throw new Error(`Azure TTS ${res.status}`);
-  //           const ab = await res.arrayBuffer();
-  //           return Buffer.from(ab);
-  //         } catch (e) {
-  //           lastErr = e;
-  //         }
-  //       }
-  //     }
-  //   }
-  //   throw lastErr || new Error("Azure TTS failed");
-  // }
-
-  // function escapeXml(s) {
-  //   return String(s).replace(/[<>&'\"]/g, (c) => ({
-  //     "<": "&lt;",
-  //     ">": "&gt;",
-  //     "&": "&amp;",
-  //     "'": "&apos;",
-  //     '"': "&quot;",
-  //   })[c]);
-  // }
-
-  // ws.on("message", async (msg) => {
-  //   let data; try { data = JSON.parse(msg.toString()); } catch { return; }
-  //   const event = data.event;
-
-  //   if (event === "start") {
-  //     streamSid = data.start?.streamSid || null;
-  //     console.log("Stream start", streamSid);
-  //     caller.phone = data.start?.customParameters?.caller || null;
-  //     startSpeechStream();
-  //     if (GREETING_ON_START) {
-  //       // Short Azure TTS greeting using configured voice
-  //       speak(GREETING_TEXT).catch(()=>{});
-  //     }
-  //   } else if (event === "media") {
-  //     const b64 = data.media?.payload;
-  //     if (!b64) return;
-  //     const mulaw = Buffer.from(b64, "base64");
-  //     const linear16 = mulawToLinear16(mulaw);
-  //     const pcm = Buffer.from(linear16.buffer);
-  //     // if (useAzureSTT && azurePushStream) {
-  //     //   try { azurePushStream.write(pcm); } catch {}
-  //     // }
-  //   } else if (event === "stop") {
-  //     console.log("Stream stop");
-  //     // if (useAzureSTT) {
-  //     //   try { if (azurePushStream) azurePushStream.close(); } catch {}
-  //     //   azurePushStream = null;
-  //     //   try { if (azureRecognizer) azureRecognizer.stopContinuousRecognitionAsync(); } catch {}
-  //     //   try { if (azureRecognizer) azureRecognizer.close(); } catch {}
-  //     //   azureRecognizer = null;
-  //     // }
-  //     ws.close();
-  //   } else if (event === "connected") {
-  //     // Twilio occasionally sends events; ignore
-  //   }
-  // });
-
-  // ws.on("close", () => {
-  //   // if (useAzureSTT) {
-  //   //   try { if (azurePushStream) azurePushStream.close(); } catch {}
-  //   //   azurePushStream = null;
-  //   //   try { if (azureRecognizer) azureRecognizer.stopContinuousRecognitionAsync(); } catch {}
-  //   //   try { if (azureRecognizer) azureRecognizer.close(); } catch {}
-  //   //   azureRecognizer = null;
-  //   // }
-  // });
-// }
-
-server.listen(PORT, () => console.log(`AI receptionist server listening on ${PORT}. Public URL: ${PUBLIC_URL}`));
+server.listen(PORT, () => {
+  const s = providerStatus();
+  console.log(`Geno listening on http://localhost:${PORT}  (public: ${PUBLIC_URL})`);
+  console.log(`  LLM  ${s.llm.provider} / ${s.llm.model}${s.llm.fallbacks.length ? ` (fallback: ${s.llm.fallbacks.join(", ")})` : ""}`);
+  console.log(`  STT  ${s.stt.serverSide ? `${s.stt.provider} / ${s.stt.model}` : "browser Web Speech API"}`);
+  console.log(`  TTS  ${s.tts.provider}`);
+  if (!s.llm.configured) console.warn(`  WARNING: LLM has no credentials - run: npm run doctor`);
+  if (s.stt.serverSide && !s.stt.configured) console.warn(`  WARNING: STT has no credentials - run: npm run doctor`);
+  if (!s.tts.configured) console.warn(`  WARNING: TTS has no credentials - run: npm run doctor`);
+});
 

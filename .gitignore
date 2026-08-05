@@ -4,3 +4,14 @@ ai-receptionist-sa.json
 *.log
 *.tmp
 .DS_Store
+
+# Benchmark artifacts: reports and generated audio
+bench/out/
+# Golden-set audio may contain real visitor voices (PII) - keep it local
+bench/fixtures/golden/*.wav
+
+# Python (tts-server)
+__pycache__/
+*.pyc
+.venv/
+venv/

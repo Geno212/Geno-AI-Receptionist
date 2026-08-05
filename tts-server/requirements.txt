@@ -1,0 +1,19 @@
+# Geno self-hosted TTS sidecar
+#
+# Install PyTorch FIRST, matched to your CUDA version, then this file:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r requirements.txt
+#
+# torch is intentionally NOT pinned here: the correct wheel depends on the
+# machine's CUDA runtime, and installing the default CPU wheel would silently
+# make synthesis unusably slow.
+
+flask>=3.0
+numpy>=1.24
+
+# Chatterbox Multilingual (MIT) - the architecture behind both the English model
+# and NAMAA-Egyptian-TTS, so one dependency serves both languages.
+chatterbox-tts>=0.1.2
+
+# Model download / caching
+huggingface_hub>=0.23
