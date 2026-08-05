@@ -3,6 +3,10 @@
 How a visitor's spoken sentence becomes a spoken answer, and where every
 decision is made.
 
+> For setup instructions, project status, usage caps and the free-stack
+> migration, see **[HANDOVER.md](HANDOVER.md)**. This document is the technical
+> deep-dive.
+
 **Scope:** Egyptian Arabic + English. Browser-based (no telephony).
 
 ---

@@ -36,7 +36,9 @@ const TTS_LOCAL_URL = process.env.TTS_LOCAL_URL || "http://localhost:8020";
 
 const LOG_TRANSCRIPTS = (process.env.LOG_TRANSCRIPTS ?? "1") === "1";
 const GREETING_ON_START = (process.env.GREETING_ON_START ?? "1") === "1";
-const GREETING_TEXT = process.env.GREETING_TEXT || "أهلاً بك في السويدي إليكتريك. أنا جينو. Welcome to El Sewedy Electric. I am Geno. How can I help you? 你好，欢迎来到 Elsewedy Electric。";
+// Scope is Egyptian Arabic + English only; the greeting is bilingual so the
+// visitor's first reply establishes which language the conversation continues in.
+const GREETING_TEXT = process.env.GREETING_TEXT || "أهلاً بك في السويدي إليكتريك. أنا جينو. Welcome to El Sewedy Electric, I am Geno.";
 
 // ========== LIGHT DB (JSON file) ==========
 const dbPath = path.join(__dirname, "db.json");
@@ -800,11 +802,6 @@ function handleBrowserConnection(ws) {
     // Removed aggressive European language heuristics (German/French/Italian) 
     // because they were triggering on common English words (e.g. "I", "a", "is").
     
-    // Cleanup extra spaces
-    processed = processed.replace(/\s+/g, " ").trim();
-
-    return processed;
-
     // Cleanup extra spaces
     processed = processed.replace(/\s+/g, " ").trim();
 

@@ -13,6 +13,11 @@ visitor meeting verification and sales lead capture.
 
 Provider choice is `.env` configuration, not code — see [lib/providers.js](lib/providers.js).
 
+> **New to this project, or setting it up on another machine?**
+> Read **[docs/HANDOVER.md](docs/HANDOVER.md)** — the complete guide: current
+> status, the full request flow, usage caps, exact setup steps, and how to switch
+> to the fully free stack.
+
 ## Quick start
 
 ```bash
@@ -165,6 +170,16 @@ node bench/run-stt.js            # needs a recorded golden set
 
 See [bench/README.md](bench/README.md) for what each harness checks, the
 benchmark results, and how to record the STT golden set.
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| **[docs/HANDOVER.md](docs/HANDOVER.md)** | **Start here** — status, full flow, caps, setup, free-stack switch |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical detail on the request flow and audio contract |
+| [bench/README.md](bench/README.md) | Benchmark harnesses and measured results |
+| [tts-server/README.md](tts-server/README.md) | Self-hosted TTS setup |
+| [legacy/README.md](legacy/README.md) | The removed Twilio/Azure/Google code |
 
 ## Data
 
