@@ -309,7 +309,11 @@ app.post(
       });
     } catch (e) {
       const status = e?.status === 429 ? 429 : 500;
-      console.error("[stt] error", e.message);
+      const bytes = req.body?.length || 0;
+      const head = req.body && bytes
+        ? Buffer.from(req.body).subarray(0, 4).toString("hex")
+        : "none";
+      console.error(`[stt] error (${bytes}B, magic=${head})`, e.message);
       res.status(status).json({ ok: false, error: e.message, quota: Boolean(e?.isQuota) });
     }
   }

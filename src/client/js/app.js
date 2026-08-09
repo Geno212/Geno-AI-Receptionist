@@ -77,16 +77,48 @@
       if (!ws || ws.readyState !== WebSocket.OPEN || isAiSpeaking || greetingPending) return;
       listeningPaused = false;
       discardNextRecording = false;
+      forceCommitOnStop = false;
       if (!isRecording) startSTT();
     }
 
-    // Red ball: tap to stop/start listening when VAD keeps running after you stop talking.
-    aiContainer.title = 'Tap to stop or start listening';
+    /** End the current utterance now and send it to /stt (or finalize browser STT). */
+    function commitUtterance() {
+      if (isAiSpeaking || greetingPending) return;
+
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        listeningPaused = false;
+        discardNextRecording = false;
+        forceCommitOnStop = true;
+        if (serverSttPollTimer) {
+          clearInterval(serverSttPollTimer);
+          serverSttPollTimer = null;
+        }
+        setStatus('thinking');
+        $('#status').textContent = 'TRANSCRIBING...';
+        try { mediaRecorder.stop(); } catch (e) {}
+        return;
+      }
+
+      if (recognition && isRecording) {
+        const text = (lastInterimText || '').trim();
+        if (text) {
+          commitSpeech(text);
+          try { recognition.stop(); } catch (e) {}
+        } else {
+          stopListening({ discard: true });
+        }
+      }
+    }
+
+    // Red ball: while listening, tap to stop & transcribe; while paused, tap to listen again.
+    aiContainer.title = 'Tap to finish speaking and transcribe';
     aiContainer.style.cursor = 'pointer';
     aiContainer.addEventListener('click', () => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (isAiSpeaking || greetingPending) return;
-      if (isRecording && !listeningPaused) stopListening({ discard: true });
+      const recordingNow = (mediaRecorder && mediaRecorder.state === 'recording')
+        || (recognition && isRecording && !listeningPaused);
+      if (recordingNow) commitUtterance();
       else resumeListening();
     });
 
@@ -107,6 +139,8 @@
     let greetingFallbackTimer = null;
     let listeningPaused = false;
     let discardNextRecording = false;
+    let forceCommitOnStop = false;
+    let lastInterimText = '';
     // Hold LLM text until PCM actually starts so chat and speech appear together.
     let pendingReplyText = null;
     let pendingReplyTimer = null;
@@ -441,6 +475,8 @@
       recordedChunks = [];
       isCommitting = false;
       serverSttActive = true;
+      isRecording = true;
+      forceCommitOnStop = false;
       let speechSeen = false;
 
       mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) recordedChunks.push(e.data); };
@@ -450,16 +486,23 @@
         const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
         recordedChunks = [];
         serverSttActive = false;
+        const forced = forceCommitOnStop;
+        forceCommitOnStop = false;
 
         if (discardNextRecording) {
           discardNextRecording = false;
-          // User tapped the ball to stop — do not transcribe leftover audio.
+          isRecording = false;
+          // Explicit discard (hangup / pause) — do not transcribe.
           return;
         }
 
-        // Ignore blips too short to contain speech.
-        if (!speechSeen || blob.size < 4000) { if (isRecording && !listeningPaused) startSTT(); return; }
+        // Ignore blips too short to contain speech (manual tap still needs a real clip).
+        if ((!speechSeen && !forced) || blob.size < 4000) {
+          if (isRecording && !listeningPaused) startSTT();
+          return;
+        }
 
+        isRecording = false;
         setStatus('thinking');
         $('#status').textContent = 'TRANSCRIBING...';
         try {
@@ -474,13 +517,13 @@
           if (data.ok && data.text) {
             if (isSpuriousTranscript(data.text)) {
               console.warn('Ignoring spurious STT transcript:', data.text);
-              if (isRecording && !listeningPaused) startSTT();
+              if (!listeningPaused) startSTT();
             } else {
               commitSpeech(data.text, data.language || null);
             }
           } else {
             console.warn('server STT returned nothing', data);
-            if (isRecording && !listeningPaused) startSTT();
+            if (!listeningPaused) startSTT();
           }
         } catch (e) {
           // Network/server failure: degrade to the browser engine rather than
@@ -488,11 +531,13 @@
           console.warn('server STT failed, falling back to browser STT', e);
           addChatMessage('Speech service unavailable, using browser recognition', 'system');
           useServerStt = false;
-          if (isRecording && !listeningPaused) startSTT();
+          if (!listeningPaused) startSTT();
         }
       };
 
-      mediaRecorder.start(250);
+      // One complete blob on stop — timesliced chunks (start(250)) often produce
+      // WebM Groq rejects as "not a valid media file" even when size looks fine.
+      mediaRecorder.start();
       setVisualizerState('listening');
       setStatus('listening');
       silenceStart = Date.now();
@@ -558,22 +603,26 @@
         const last = event.results.length - 1;
         const text = event.results[last][0].transcript;
         const isFinal = event.results[last].isFinal;
+        lastInterimText = text;
 
         // Visual feedback that we are hearing text
         $('#status').textContent = "HEARD: " + (text.length > 20 ? text.substring(0,20)+"..." : text);
 
         if (isFinal) {
+            lastInterimText = '';
             commitSpeech(text);
         } else {
             // Smart VAD check: If we have interim text, but audio has been silent for 2500ms, force commit
             // This relies on the visualizer loop updating 'silenceStart'
             if (speechDetected && silenceStart && (Date.now() - silenceStart > 2500)) {
                  // Force commit interim result
+                 lastInterimText = '';
                  commitSpeech(text);
                  recognition.stop();
             } else {
                  // Fallback timer if VAD fails or mic level is weird
                  silenceTimer = setTimeout(() => {
+                    lastInterimText = '';
                     commitSpeech(text);
                 }, 3500);
             }
@@ -600,6 +649,7 @@
 
       try { recognition.start(); } catch(e){}
       isRecording = true;
+      lastInterimText = '';
     }
 
     function commitSpeech(text, detectedLang = null) {
