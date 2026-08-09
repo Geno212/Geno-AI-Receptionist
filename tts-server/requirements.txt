@@ -1,19 +1,39 @@
 # Geno self-hosted TTS sidecar
 #
+# Use a dedicated venv (recommended — avoids breaking other Python projects):
+#   python -m venv .venv
+#   .venv\Scripts\activate          # Windows
+#   # source .venv/bin/activate     # macOS/Linux
+#
 # Install PyTorch FIRST, matched to your CUDA version, then this file:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 #   pip install -r requirements.txt
+#   pip install --no-deps chatterbox-tts s3tokenizer
 #
 # torch is intentionally NOT pinned here: the correct wheel depends on the
 # machine's CUDA runtime, and installing the default CPU wheel would silently
 # make synthesis unusably slow.
+#
+# On cards with <8 GB VRAM start with: TTS_LAZY_UNLOAD=1 python server.py
 
 flask>=3.0
-numpy>=1.24
+numpy>=1.24,<2
 
 # Chatterbox Multilingual (MIT) - the architecture behind both the English model
 # and NAMAA-Egyptian-TTS, so one dependency serves both languages.
-chatterbox-tts>=0.1.2
+# Install chatterbox-tts with --no-deps after this file (see above) so it cannot
+# pull transformers 5.x / a mismatched torch stack.
+transformers==4.46.3
+diffusers==0.29.0
+resemble-perth==1.0.1
+conformer==0.3.2
+onnx==1.16.0
+librosa>=0.10
+safetensors>=0.5
+omegaconf>=2.3
+pykakasi>=2.3
+pyloudnorm
+spacy-pkuseg
 
 # Model download / caching
-huggingface_hub>=0.23
+huggingface_hub>=0.23,<1

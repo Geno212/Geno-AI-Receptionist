@@ -1,545 +1,10 @@
-<!doctype html>
-<html lang="en" dir="ltr">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>El Sewedy Electric — AI Receptionist</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;800&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg-dark: #050505;
-      --bg-panel: rgba(20, 20, 20, 0.6);
-      --brand-red: #E31E24;
-      --brand-dark: #8a0f13;
-      --text-main: #ffffff;
-      --text-muted: #a0a0a0;
-      --glass-border: rgba(255, 255, 255, 0.08);
-      --glass-highlight: rgba(255, 255, 255, 0.05);
-      --glow-color: var(--brand-red);
-    }
-
-    * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
-    
-    body {
-      margin: 0;
-      height: 100vh; /* Fallback */
-      height: 100dvh;
-      background-color: var(--bg-dark);
-      background-image: 
-        radial-gradient(circle at 50% 0%, #1a0505 0%, transparent 60%),
-        radial-gradient(circle at 85% 90%, #0f0202 0%, transparent 50%);
-      color: var(--text-main);
-      font-family: 'Inter', sans-serif;
-      overflow: hidden; /* Prevent body scroll */
-      display: flex;
-      flex-direction: column;
-    }
-
-    /* --- Header --- */
-    .header {
-      height: 220px;
-      padding: 0 40px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      z-index: 10;
-      flex-shrink: 0;
-      background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      cursor: default;
-    }
-
-    .brand img {
-      height: 200px;
-      width: auto;
-      filter: drop-shadow(0 0 25px rgba(227, 30, 36, 0.6));
-      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-    }
-    
-    .brand:hover img {
-      transform: scale(1.05);
-    }
-
-    .header-controls {
-      display: flex;
-      gap: 12px;
-    }
-
-    .lang-btn {
-      background: rgba(255,255,255,0.05);
-      border: 1px solid var(--glass-border);
-      color: var(--text-main);
-      padding: 8px 16px;
-      border-radius: 20px;
-      cursor: pointer;
-      font-family: 'Cairo', sans-serif;
-      font-weight: 600;
-      font-size: 14px;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .lang-btn:hover { 
-      background: rgba(255,255,255,0.15); 
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-      border-color: rgba(255,255,255,0.2);
-    }
-    .lang-btn:active {
-      transform: translateY(0);
-    }
-
-    /* --- Main Layout --- */
-    .main-container {
-      flex: 1;
-      display: flex;
-      overflow: hidden; /* Important for internal scrolling */
-      position: relative;
-      width: 100%;
-      max-width: 1600px;
-      margin: 0 auto;
-    }
-
-    /* Left Side: Visualizer */
-    .visualizer-section {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-      padding: 20px;
-    }
-
-    /* Right Side: Chat & Controls */
-    .interaction-section {
-      width: 400px;
-      display: flex;
-      flex-direction: column;
-      background: rgba(0, 0, 0, 0.2);
-      border-left: 1px solid var(--glass-border);
-      backdrop-filter: blur(10px);
-      z-index: 5;
-    }
-
-    /* --- AI Core Visualizer --- */
-    .ai-core-container {
-      position: relative;
-      width: 280px;
-      height: 280px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 40px;
-      flex-shrink: 0;
-    }
-
-    .ai-core {
-      width: 100px;
-      height: 100px;
-      border-radius: 50%;
-      background: var(--brand-red);
-      box-shadow: 0 0 60px var(--brand-red);
-      position: relative;
-      z-index: 2;
-      transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    
-    /* Interactive Visualizer Hover */
-    .ai-core-container:hover .ai-core {
-      transform: scale(1.05);
-      box-shadow: 0 0 80px var(--brand-red);
-      cursor: pointer;
-    }
-    .ai-core-container:hover .ring-1 {
-      border-color: rgba(227, 30, 36, 0.6);
-      transform: translate(-50%, -50%) scale(1.05);
-    }
-
-    .ai-ring {
-      position: absolute;
-      border-radius: 50%;
-      border: 2px solid var(--brand-red);
-      opacity: 0.3;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      transition: width 0.1s ease-out, height 0.1s ease-out, opacity 0.1s ease-out; /* Faster transition for audio sync */
-      will-change: width, height, opacity;
-    }
-    
-    .ring-1 { width: 140px; height: 140px; border-width: 1px; }
-    .ring-2 { width: 200px; height: 200px; border-width: 1px; opacity: 0.1; }
-    .ring-3 { width: 260px; height: 260px; border-width: 1px; opacity: 0.05; }
-
-    /* States */
-    .state-listening .ai-core {
-      background: #ffffff;
-      box-shadow: 0 0 40px rgba(255,255,255,0.5);
-      transform: scale(0.9);
-    }
-    .state-listening .ring-1 { border-color: #fff; width: 130px; height: 130px; animation: pulse-ring 2s infinite; }
-    
-    .state-speaking .ai-core {
-      background: var(--brand-red);
-      box-shadow: 0 0 80px var(--brand-red), inset 0 0 20px #fff;
-      animation: pulse-core 1.5s infinite alternate;
-    }
-    .state-speaking .ring-1 { width: 160px; height: 160px; opacity: 0.5; animation: spin 10s linear infinite; border-top-color: transparent; }
-    .state-speaking .ring-2 { width: 220px; height: 220px; opacity: 0.3; animation: spin 15s linear infinite reverse; border-bottom-color: transparent; }
-
-    @keyframes pulse-core { 0% { transform: scale(1); } 100% { transform: scale(1.1); } }
-    @keyframes pulse-ring { 0% { transform: translate(-50%, -50%) scale(1); opacity: 0.3; } 100% { transform: translate(-50%, -50%) scale(1.2); opacity: 0; } }
-    @keyframes spin { 100% { transform: translate(-50%, -50%) rotate(360deg); } }
-
-    /* --- Status Text --- */
-    .status-display {
-      text-align: center;
-      height: 60px;
-      flex-shrink: 0;
-    }
-    .status-title {
-      font-size: 24px;
-      font-weight: 300;
-      letter-spacing: 1px;
-      margin: 0 0 8px 0;
-      opacity: 0.9;
-    }
-    .status-sub {
-      font-size: 13px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 3px;
-      font-weight: 600;
-    }
-
-    /* --- Chat Area --- */
-    .chat-container {
-      flex: 1;
-      overflow-y: auto;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      scroll-behavior: smooth;
-      min-height: 0; /* Critical for flex child scrolling */
-      /* Mask to fade out top */
-      mask-image: linear-gradient(to bottom, transparent, black 20px);
-      -webkit-mask-image: linear-gradient(to bottom, transparent, black 20px);
-    }
-
-    .msg {
-      padding: 12px 16px;
-      border-radius: 16px;
-      font-size: 14px;
-      line-height: 1.5;
-      max-width: 85%;
-      animation: fade-in 0.3s ease forwards;
-      position: relative;
-      transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s;
-      cursor: default;
-    }
-    .msg:hover {
-      transform: scale(1.02);
-      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-      z-index: 1;
-    }
-    
-    .msg.user {
-      align-self: flex-end;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid var(--glass-border);
-      color: #fff;
-      border-bottom-right-radius: 4px;
-    }
-    .msg.user:hover {
-      background: rgba(255, 255, 255, 0.12);
-      border-color: rgba(255, 255, 255, 0.2);
-    }
-    
-    .msg.ai {
-      align-self: flex-start;
-      background: rgba(227, 30, 36, 0.15);
-      border: 1px solid rgba(227, 30, 36, 0.3);
-      color: #fff;
-      border-bottom-left-radius: 4px;
-    }
-    .msg.ai:hover {
-      background: rgba(227, 30, 36, 0.25);
-      border-color: rgba(227, 30, 36, 0.5);
-    }
-
-    .msg-time {
-      font-size: 10px;
-      opacity: 0.5;
-      margin-top: 4px;
-      display: block;
-      text-align: right;
-    }
-
-    @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-
-    /* --- Controls Area --- */
-    .controls-container {
-      padding: 20px;
-      background: rgba(0,0,0,0.3);
-      border-top: 1px solid var(--glass-border);
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .control-row {
-      display: flex;
-      gap: 12px;
-    }
-
-    .btn {
-      border: none;
-      padding: 16px;
-      border-radius: 12px;
-      font-size: 16px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      font-family: 'Inter', sans-serif;
-      flex: 1;
-      position: relative;
-      overflow: hidden;
-    }
-    
-    /* Ripple effect container */
-    .btn::after {
-      content: '';
-      position: absolute;
-      top: 50%; left: 50%;
-      width: 0; height: 0;
-      background: rgba(255,255,255,0.3);
-      border-radius: 50%;
-      transform: translate(-50%, -50%);
-      transition: width 0s, height 0s;
-    }
-    .btn:active::after {
-      width: 300px; height: 300px;
-      transition: width 0.4s ease-out, height 0.4s ease-out;
-      opacity: 0;
-    }
-
-    .btn-primary {
-      background: var(--brand-red);
-      color: white;
-      box-shadow: 0 4px 20px rgba(227, 30, 36, 0.4);
-    }
-    .btn-primary:hover { 
-      background: #ff2a30; 
-      transform: translateY(-3px);
-      box-shadow: 0 8px 25px rgba(227, 30, 36, 0.6);
-    }
-    .btn-primary:active { 
-      transform: translateY(1px) scale(0.98); 
-      box-shadow: 0 2px 10px rgba(227, 30, 36, 0.3);
-    }
-    .btn-primary:disabled { background: #333; color: #666; box-shadow: none; cursor: not-allowed; transform: none; }
-
-    .btn-danger {
-      background: rgba(255, 255, 255, 0.05);
-      color: white;
-      border: 1px solid var(--glass-border);
-      flex: 0 0 60px; /* Square-ish */
-    }
-    .btn-danger:hover { background: rgba(255, 255, 255, 0.15); color: var(--brand-red); }
-    .btn-danger:disabled { opacity: 0.3; cursor: not-allowed; }
-
-    .lang-select {
-      background: rgba(0,0,0,0.3);
-      color: var(--text-muted);
-      border: 1px solid var(--glass-border);
-      font-size: 14px;
-      padding: 12px;
-      border-radius: 12px;
-      cursor: pointer;
-      font-family: 'Inter', sans-serif;
-      width: 100%;
-      appearance: none;
-      text-align: center;
-      transition: all 0.3s ease;
-    }
-    .lang-select:hover { 
-      border-color: var(--brand-red); 
-      color: #fff; 
-      background: rgba(255,255,255,0.05);
-      box-shadow: 0 0 15px rgba(227, 30, 36, 0.15);
-    }
-    .lang-select:focus {
-      border-color: var(--brand-red);
-      box-shadow: 0 0 20px rgba(227, 30, 36, 0.25);
-    }
-    .lang-select option { background: #111; text-align: left; }
-
-    /* Scrollbar */
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-
-    /* --- Responsive Design --- */
-    @media (max-width: 900px) {
-      .header {
-        height: 160px; /* Adjusted for tablet/large phone */
-        padding: 0 24px;
-      }
-      .brand img {
-        height: 140px; /* Adjusted for tablet/large phone */
-      }
-
-      .main-container {
-        flex-direction: column;
-      }
-      
-      .visualizer-section {
-        flex: 0 0 auto; /* Don't grow, take content size */
-        height: 40vh; /* Fixed height for visualizer on mobile */
-        min-height: 250px;
-        border-bottom: 1px solid var(--glass-border);
-        padding: 10px;
-      }
-
-      .interaction-section {
-        width: 100%;
-        flex: 1; /* Take remaining height */
-        border-left: none;
-        background: transparent;
-        overflow: hidden; /* Ensure it doesn't grow beyond viewport */
-        display: flex;
-        flex-direction: column;
-      }
-
-      .ai-core-container {
-        width: 180px; height: 180px;
-        margin-bottom: 20px;
-      }
-      .ai-core { width: 70px; height: 70px; }
-      .ring-1 { width: 110px; height: 110px; }
-      .ring-2 { width: 150px; height: 150px; }
-      .ring-3 { width: 190px; height: 190px; }
-
-      .status-title { font-size: 20px; }
-      .status-sub { font-size: 11px; }
-
-      .chat-container {
-        padding: 16px;
-        mask-image: none; -webkit-mask-image: none; /* Remove mask on mobile for clarity */
-      }
-      
-      .controls-container {
-        padding: 16px;
-        background: rgba(10, 10, 10, 0.95); /* Solid background for controls */
-        padding-bottom: max(16px, env(safe-area-inset-bottom));
-      }
-    }
-
-    @media (max-width: 400px) {
-      .header { height: 160px; padding: 0 16px; }
-      .brand img { height: 140px; }
-      
-      .visualizer-section { height: 35vh; }
-      .ai-core-container { transform: scale(0.8); margin-bottom: 10px; }
-    }
-  </style>
-</head>
-<body>
-
-  <header class="header">
-    <div class="brand">
-      <img src="logo.svg" alt="El Sewedy Electric Logo">
-    </div>
-    <div class="header-controls">
-      <button id="langToggle" class="lang-btn">العربية</button>
-    </div>
-  </header>
-
-  <main class="main-container">
-    
-    <!-- Left/Top: Visualizer -->
-    <section class="visualizer-section">
-      <div class="ai-core-container" id="aiContainer">
-        <div class="ai-ring ring-3"></div>
-        <div class="ai-ring ring-2"></div>
-        <div class="ai-ring ring-1"></div>
-        <div class="ai-core"></div>
-      </div>
-
-      <div class="status-display">
-        <h2 class="status-title" id="ui-title">AI Receptionist</h2>
-        <div class="status-sub" id="status">READY TO CONNECT</div>
-      </div>
-    </section>
-
-    <!-- Right/Bottom: Chat & Controls -->
-    <section class="interaction-section">
-      <div class="chat-container" id="chatLog">
-        <!-- Messages will appear here -->
-        <div class="msg ai">
-          Hello! I am the AI Receptionist. How can I help you today?
-          <span class="msg-time">Now</span>
-        </div>
-      </div>
-
-      <div class="controls-container">
-        <select id="langSelect" class="lang-select">
-          <option value="ar-EG">🇪🇬 Arabic (العربية)</option>
-          <option value="en-US" selected>🇺🇸 English (US)</option>
-          <option value="fr-FR">🇫🇷 French (Français)</option>
-          <option value="de-DE">🇩🇪 German (Deutsch)</option>
-          <option value="es-ES">🇪🇸 Spanish (Español)</option>
-          <option value="it-IT">🇮🇹 Italian (Italiano)</option>
-          <option value="ja-JP">🇯🇵 Japanese (日本語)</option>
-          <option value="zh-CN">🇨🇳 Chinese (中文)</option>
-        </select>
-        
-        <div class="control-row">
-          <button id="btnCall" class="btn btn-primary">
-            <span class="icon">📞</span> <span id="btnCallText">Start Call</span>
-          </button>
-          
-          <button id="btnHangup" class="btn btn-danger" disabled title="End Call">
-            <span class="icon">✕</span>
-          </button>
-        </div>
-      </div>
-    </section>
-
-  </main>
-
-  <script>
-    // ===== Utilities =====
+// ===== Utilities =====
     const $ = sel => document.querySelector(sel);
     const chatLog = $('#chatLog');
     const aiContainer = $('#aiContainer');
     
-    // RTL Logic & Localization
+    // The interface remains neutral; spoken language is detected per utterance.
     const translations = {
-      "ar-EG": {
-        "title": "موظف استقبال ذكي",
-        "status_ready": "جاهز للاتصال",
-        "status_connecting": "جاري الاتصال...",
-        "status_incall": "مكالمة جارية",
-        "status_listening": "أستمع إليك...",
-        "status_speaking": "يتحدث...",
-        "btn_call": "اتصال",
-        "lang_toggle": "English"
-      },
       "en-US": {
         "title": "AI Receptionist",
         "status_ready": "READY TO CONNECT",
@@ -547,48 +12,8 @@
         "status_incall": "CALL ACTIVE",
         "status_listening": "LISTENING...",
         "status_speaking": "SPEAKING...",
-        "btn_call": "Start Call",
-        "lang_toggle": "العربية"
+        "btn_call": "Start Call"
       }
-    };
-
-    const langSelect = $('#langSelect');
-    const langToggle = $('#langToggle');
-    
-    function updateTexts(lang) {
-      const t = translations[lang] || translations["en-US"];
-      $('#ui-title').textContent = t.title;
-      $('#btnCallText').textContent = t.btn_call;
-      
-      // Update Toggle Button Text
-      if (lang.startsWith('ar')) {
-        langToggle.textContent = "English";
-        langToggle.style.fontFamily = "Inter";
-      } else {
-        langToggle.textContent = "العربية";
-        langToggle.style.fontFamily = "Cairo";
-      }
-      
-      // Update status text if idle
-      if(!ws || ws.readyState !== WebSocket.OPEN) {
-         $('#status').textContent = t.status_ready;
-      }
-    }
-
-    langSelect.onchange = () => {
-      const lang = langSelect.value;
-      document.documentElement.dir = lang.startsWith('ar') ? 'rtl' : 'ltr';
-      updateTexts(lang);
-      if (isRecording) { stopSTT(); startSTT(); }
-    };
-
-    langToggle.onclick = () => {
-      if (langSelect.value === 'ar-EG') {
-        langSelect.value = 'en-US';
-      } else {
-        langSelect.value = 'ar-EG';
-      }
-      langSelect.onchange();
     };
 
     function addChatMessage(text, type) {
@@ -605,18 +30,65 @@
       chatLog.appendChild(div);
       chatLog.scrollTop = chatLog.scrollHeight;
     }
+
+    function clearChat() {
+      chatLog.innerHTML = '';
+    }
+
+    // Whisper invents YouTube-style outros on silence/noise. Reject those only —
+    // every real language remains acceptable for STT.
+    function isSpuriousTranscript(text) {
+      const t = (text || '').trim();
+      if (!t) return true;
+      const lower = t.toLowerCase();
+      const hallucinations = [
+        'thanks for watching', 'thank you for watching', 'thanks for listening',
+        'дякую за перегляд', 'подписывайтесь', 'subscribe', 'please subscribe',
+        'like and subscribe', 'see you next time', 'thanks for tuning in',
+        'amara.org', 'www.youtube.com', 'ترجمة نانسي قنقر'
+      ];
+      return hallucinations.some(h => lower.includes(h));
+    }
     
     function setStatus(key) {
-      const lang = langSelect.value;
-      const t = translations[lang] || translations["en-US"];
+      const t = translations["en-US"];
       const text = t[`status_${key}`] || key;
       $('#status').textContent = text;
     }
 
     function setVisualizerState(state) {
-      aiContainer.classList.remove('state-listening', 'state-speaking');
+      aiContainer.classList.remove('state-listening', 'state-speaking', 'state-paused');
       if(state) aiContainer.classList.add(`state-${state}`);
     }
+
+    function stopListening({ discard = true } = {}) {
+      listeningPaused = true;
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        discardNextRecording = discard;
+        try { mediaRecorder.stop(); } catch (e) {}
+      } else {
+        stopSTT();
+      }
+      setVisualizerState('paused');
+      $('#status').textContent = 'TAP BALL TO LISTEN';
+    }
+
+    function resumeListening() {
+      if (!ws || ws.readyState !== WebSocket.OPEN || isAiSpeaking || greetingPending) return;
+      listeningPaused = false;
+      discardNextRecording = false;
+      if (!isRecording) startSTT();
+    }
+
+    // Red ball: tap to stop/start listening when VAD keeps running after you stop talking.
+    aiContainer.title = 'Tap to stop or start listening';
+    aiContainer.style.cursor = 'pointer';
+    aiContainer.addEventListener('click', () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (isAiSpeaking || greetingPending) return;
+      if (isRecording && !listeningPaused) stopListening({ discard: true });
+      else resumeListening();
+    });
 
     // ===== Direct WebSocket Setup =====
     let ws;
@@ -629,6 +101,34 @@
     let isAiSpeaking = false;
     let isCommitting = false;
     let ttsEndTimeout = null; // Store timeout to cancel it if new audio arrives
+    // Don't open the mic until Geno's greeting finishes (or a short fallback).
+    // Listening during/just-after silence is when Whisper invents fake phrases.
+    let greetingPending = false;
+    let greetingFallbackTimer = null;
+    let listeningPaused = false;
+    let discardNextRecording = false;
+    // Hold LLM text until PCM actually starts so chat and speech appear together.
+    let pendingReplyText = null;
+    let pendingReplyTimer = null;
+
+    function flushPendingReply() {
+      if (pendingReplyTimer) {
+        clearTimeout(pendingReplyTimer);
+        pendingReplyTimer = null;
+      }
+      if (!pendingReplyText) return;
+      const text = pendingReplyText;
+      pendingReplyText = null;
+      addChatMessage(text, 'ai');
+    }
+
+    function clearPendingReply() {
+      if (pendingReplyTimer) {
+        clearTimeout(pendingReplyTimer);
+        pendingReplyTimer = null;
+      }
+      pendingReplyText = null;
+    }
     
     // Audio Context & PCM Player & Analyzer
     let audioCtx;
@@ -691,13 +191,21 @@
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = async () => {
+        clearChat();
         addChatMessage("Connected to server", "system");
         setStatus('incall');
         $('#btnCall').disabled = true;
         $('#btnHangup').disabled = false;
-        
-        // 2. Start STT
-        startSTT();
+
+        // Wait for the server greeting to finish before listening.
+        greetingPending = true;
+        if (greetingFallbackTimer) clearTimeout(greetingFallbackTimer);
+        greetingFallbackTimer = setTimeout(() => {
+          if (greetingPending && ws && ws.readyState === WebSocket.OPEN && !isRecording) {
+            greetingPending = false;
+            startSTT();
+          }
+        }, 8000);
       };
 
       ws.onmessage = async (event) => {
@@ -714,13 +222,24 @@
             setVisualizerState('speaking');
             setStatus('speaking');
             // Reset timing for new utterance
-            nextStartTime = audioCtx.currentTime + 0.05; 
+            nextStartTime = audioCtx.currentTime + 0.05;
+            // Reveal chat text when scheduled playback begins (not when TTS finished generating).
+            if (pendingReplyText && !pendingReplyTimer) {
+              const delayMs = Math.max(0, (nextStartTime - audioCtx.currentTime) * 1000);
+              pendingReplyTimer = setTimeout(flushPendingReply, delayMs);
+            }
           }
           playPCMChunk(event.data);
         } else {
           try {
             const msg = JSON.parse(event.data);
-            if (msg.type === 'tts_end') {
+            if (msg.type === 'reply' && msg.text) {
+              // Stash until first audio plays — don't show text early while TTS generates.
+              clearPendingReply();
+              pendingReplyText = msg.text;
+            } else if (msg.type === 'tts_end') {
+              // If TTS sent no audio at all, still show the text.
+              if (pendingReplyText && !pendingReplyTimer) flushPendingReply();
               // We don't need to do anything special for PCM end, 
               // just wait for the queue to finish playing?
               // We can estimate when it finishes based on nextStartTime
@@ -730,11 +249,19 @@
               if (ttsEndTimeout) clearTimeout(ttsEndTimeout);
 
               const scheduleSTT = () => {
-                   if(isAiSpeaking) {
-                     isAiSpeaking = false;
+                   greetingPending = false;
+                   if (greetingFallbackTimer) {
+                     clearTimeout(greetingFallbackTimer);
+                     greetingFallbackTimer = null;
+                   }
+                   isAiSpeaking = false;
+                   if (listeningPaused) {
+                     setVisualizerState('paused');
+                     $('#status').textContent = 'TAP BALL TO LISTEN';
+                   } else {
                      setVisualizerState('listening');
                      setStatus('listening');
-                     startSTT();
+                     if (!isRecording) startSTT();
                    }
                    ttsEndTimeout = null;
               };
@@ -750,6 +277,14 @@
       };
 
       ws.onclose = () => {
+        greetingPending = false;
+        listeningPaused = false;
+        discardNextRecording = false;
+        clearPendingReply();
+        if (greetingFallbackTimer) {
+          clearTimeout(greetingFallbackTimer);
+          greetingFallbackTimer = null;
+        }
         addChatMessage("Call ended", "system");
         stopSTT();
         
@@ -916,24 +451,36 @@
         recordedChunks = [];
         serverSttActive = false;
 
+        if (discardNextRecording) {
+          discardNextRecording = false;
+          // User tapped the ball to stop — do not transcribe leftover audio.
+          return;
+        }
+
         // Ignore blips too short to contain speech.
-        if (!speechSeen || blob.size < 4000) { if (isRecording) startSTT(); return; }
+        if (!speechSeen || blob.size < 4000) { if (isRecording && !listeningPaused) startSTT(); return; }
 
         setStatus('thinking');
         $('#status').textContent = 'TRANSCRIBING...';
         try {
-          const lang = ($('#langSelect').value || '').startsWith('ar') ? 'ar' : 'en';
-          const res = await fetch(`/stt?lang=${lang}`, {
+          // Let Whisper detect Arabic vs English from every utterance. This also
+          // permits natural code-switching without a frontend language switch.
+          const res = await fetch('/stt?lang=auto', {
             method: 'POST',
             headers: { 'Content-Type': blob.type || 'audio/webm' },
             body: blob
           });
           const data = await res.json();
           if (data.ok && data.text) {
-            commitSpeech(data.text);
+            if (isSpuriousTranscript(data.text)) {
+              console.warn('Ignoring spurious STT transcript:', data.text);
+              if (isRecording && !listeningPaused) startSTT();
+            } else {
+              commitSpeech(data.text, data.language || null);
+            }
           } else {
             console.warn('server STT returned nothing', data);
-            if (isRecording) startSTT();
+            if (isRecording && !listeningPaused) startSTT();
           }
         } catch (e) {
           // Network/server failure: degrade to the browser engine rather than
@@ -941,7 +488,7 @@
           console.warn('server STT failed, falling back to browser STT', e);
           addChatMessage('Speech service unavailable, using browser recognition', 'system');
           useServerStt = false;
-          if (isRecording) startSTT();
+          if (isRecording && !listeningPaused) startSTT();
         }
       };
 
@@ -988,9 +535,11 @@
       isCommitting = false; // Reset commit flag for new turn
       recognition = new SpeechRecognition();
       
-      const selectedLang = $('#langSelect').value;
-      recognition.lang = selectedLang || 'en-US';
-      console.log("Starting STT with language:", recognition.lang);
+      // Web Speech has no true auto-detect mode. This path is only an emergency
+      // fallback when server-side Whisper fails, so use the browser locale.
+      const browserLang = (navigator.language || 'en-US').toLowerCase();
+      recognition.lang = browserLang.startsWith('ar') ? 'ar-EG' : 'en-US';
+      console.log("Starting fallback browser STT with locale:", recognition.lang);
 
       recognition.continuous = true;
       recognition.interimResults = true; 
@@ -1053,16 +602,24 @@
       isRecording = true;
     }
 
-    function commitSpeech(text) {
+    function commitSpeech(text, detectedLang = null) {
         if (isCommitting) return;
         if (!text || !text.trim()) return;
+        if (isSpuriousTranscript(text)) {
+          console.warn('Ignoring spurious transcript:', text);
+          return;
+        }
+        if (isAiSpeaking || greetingPending || listeningPaused) {
+          console.warn('Ignoring speech while Geno is speaking/paused:', text);
+          return;
+        }
         
         isCommitting = true;
         clearTimeout(silenceTimer);
         addChatMessage(text, "user");
         
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'text', text: text }));
+          ws.send(JSON.stringify({ type: 'text', text: text, language: detectedLang || undefined }));
         }
         
         stopSTT();
@@ -1129,7 +686,3 @@
         console.log(`STT mode: ${useServerStt ? 'server (' + cfg.providers.stt.model + ')' : 'browser Web Speech API'}`);
       })
       .catch(() => { /* keep the browser engine if /config is unreachable */ });
-
-  </script>
-</body>
-</html>

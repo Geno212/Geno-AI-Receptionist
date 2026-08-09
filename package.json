@@ -13,6 +13,10 @@
     "bench:tts": "node bench/run-tts.js",
     "bench:stt": "node bench/run-stt.js"
   },
+  "nodemonConfig": {
+    "watch": ["server.js", "lib", "src"],
+    "ext": "js,json,html,css"
+  },
   "dependencies": {
     "body-parser": "^1.20.2",
     "dotenv": "^16.4.5",

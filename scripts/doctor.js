@@ -42,7 +42,8 @@ async function main() {
   section("Project files");
   const required = [
     "server.js", "db.json", "package.json",
-    "lib/providers.js", "lib/system-prompt.js", "public/client.html",
+    "lib/providers.js", "lib/system-prompt.js", "lib/languages.js",
+    "src/client/index.html", "src/client/js/app.js", "src/client/css/styles.css",
   ];
   for (const f of required) {
     if (fs.existsSync(path.join(__dirname, "..", f))) ok(f);

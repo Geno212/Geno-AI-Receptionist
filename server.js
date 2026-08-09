@@ -17,6 +17,7 @@ const WebSocket = require("ws");
 const { callLLMWithFallback, transcribe, providerStatus } = require("./lib/providers");
 // Single source of truth for the system prompt, shared with bench/.
 const { buildSystemPrompt } = require("./lib/system-prompt");
+const languages = require("./lib/languages");
 
 // ========== ENV ==========
 const PORT = process.env.PORT || 3000;
@@ -225,7 +226,12 @@ async function callLLM(messages) {
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, "public")));
+
+const CLIENT_DIR = path.join(__dirname, "src", "client");
+app.use(express.static(CLIENT_DIR));
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(CLIENT_DIR, "index.html"));
+});
 
 app.get("/approve", (req, res) => {
   const id = req.query.id;
@@ -268,15 +274,39 @@ app.post(
         : mime.includes("wav") ? "wav"
         : "webm";
 
-      // `lang` may be "" to let Whisper auto-detect; default is Arabic because
-      // auto-detect flip-flops on short ar/en code-switched utterances.
+      // Auto-detect by default. When a non-core language appears, enable it for
+      // both STT routing and TTS (server-side — no client language picker).
       const langParam = req.query.lang;
-      const language = langParam === "" || langParam === "auto" ? null : (langParam || "ar");
+      const language = !langParam || langParam === "" || langParam === "auto"
+        ? null
+        : langParam;
 
-      const { text, model } = await transcribe(req.body, { filename: `speech.${ext}`, language });
+      const { text, model, language: detectedLang } = await transcribe(req.body, { filename: `speech.${ext}`, language });
       const latencyMs = Date.now() - started;
-      if (LOG_TRANSCRIPTS) console.log(`[stt] ${latencyMs}ms (${req.body.length}B ${ext}): ${text}`);
-      res.json({ ok: true, text, model, latencyMs });
+
+      let langInfo = null;
+      if (detectedLang) {
+        langInfo = languages.enableLanguage(detectedLang);
+        if (langInfo.ok && langInfo.newlyEnabled && TTS_PROVIDER === "local") {
+          const ensured = await languages.ensureTtsLanguage(langInfo.language, TTS_LOCAL_URL);
+          if (LOG_TRANSCRIPTS) {
+            console.log(`[lang] enabled ${langInfo.language} for TTS/STT`, ensured.ok ? "ok" : ensured.error);
+          }
+        }
+      }
+
+      if (LOG_TRANSCRIPTS) {
+        console.log(`[stt] ${latencyMs}ms (${req.body.length}B ${ext}${detectedLang ? `, lang=${detectedLang}` : ""}): ${text}`);
+      }
+      res.json({
+        ok: true,
+        text,
+        model,
+        language: langInfo?.language || languages.normalizeLang(detectedLang) || null,
+        newly_enabled: Boolean(langInfo?.newlyEnabled),
+        enabled_languages: languages.listEnabled(),
+        latencyMs,
+      });
     } catch (e) {
       const status = e?.status === 429 ? 429 : 500;
       console.error("[stt] error", e.message);
@@ -294,7 +324,36 @@ app.get("/config", (req, res) => {
     public_url: PUBLIC_URL,
     providers: providerStatus(),
     prompt: { kb_mode: process.env.KB_MODE || "lean", chars: buildSystemPrompt().length },
+    languages: {
+      core: languages.listCore(),
+      enabled: languages.listEnabled(),
+      supported_tts: languages.listSupported(),
+      last_detected: languages.getLastDetected(),
+    },
   });
+});
+
+/** Language registry — any HTTP/WS client can inspect/enable languages. */
+app.get("/languages", (req, res) => {
+  res.json({
+    ok: true,
+    core: languages.listCore(),
+    enabled: languages.listEnabled(),
+    supported_tts: languages.listSupported(),
+    last_detected: languages.getLastDetected(),
+  });
+});
+
+app.post("/languages/enable", express.json(), async (req, res) => {
+  const info = languages.enableLanguage(req.body?.language);
+  if (!info.ok) {
+    return res.status(400).json({ ok: false, error: info.error, supported_tts: languages.listSupported() });
+  }
+  let tts = null;
+  if (TTS_PROVIDER === "local") {
+    tts = await languages.ensureTtsLanguage(info.language, TTS_LOCAL_URL);
+  }
+  res.json({ ...info, tts });
 });
 // Quick LLM test (no secrets in response)
 app.post("/llm-test", async (req, res) => {
@@ -366,7 +425,7 @@ function handleBrowserConnection(ws) {
 
   const convo = [ { role: "system", content: dynamicPrompt } ];
 
-  // Handle text messages from browser (STT done in browser)
+  // Handle text messages from browser / any WS client (language comes from /stt registry)
   ws.on("message", async (msg) => {
     try {
       const data = JSON.parse(msg.toString());
@@ -377,7 +436,14 @@ function handleBrowserConnection(ws) {
             return;
         }
 
-        console.log("Browser STT:", data.text);
+        // Optional hint from client; /stt already enabled the language server-side.
+        if (data.language) {
+          const info = languages.enableLanguage(data.language);
+          if (info.ok && info.newlyEnabled && TTS_PROVIDER === "local") {
+            await languages.ensureTtsLanguage(info.language, TTS_LOCAL_URL);
+          }
+        }
+        console.log("Browser STT:", data.text, `(lang=${languages.getLastDetected()})`);
         await handleTurn(data.text);
       }
     } catch (e) {}
@@ -835,6 +901,10 @@ function handleBrowserConnection(ws) {
         // Enqueue the TTS generation and sending
         audioQueue.push(async () => {
             try {
+                // Show the spoken text in the chat before audio starts.
+                if (ws.readyState === WebSocket.OPEN && text) {
+                  ws.send(JSON.stringify({ type: "reply", text }));
+                }
                 if (TTS_PROVIDER === "local") {
                     await speakLocal(text);
                 } else {
@@ -954,10 +1024,20 @@ function handleBrowserConnection(ws) {
    * The sidecar returns WAV; we strip the header and forward raw PCM to honour
    * the client contract (PCM 24kHz / 16-bit / mono / LE, then {type:'tts_end'}).
    */
+  function detectTtsLanguage(text) {
+    return languages.resolveTtsLanguage(text, languages.getLastDetected());
+  }
+
   async function speakLocal(text) {
     try {
-      const lang = /[؀-ۿ]/.test(text) ? "ar" : "en";
-      const ttsText = processTextForSpeech(preprocessTextForElevenLabs(text), lang === "ar" ? "ar-EG" : "en-US");
+      const lang = detectTtsLanguage(text);
+      // Ensure sidecar knows about on-demand languages (no-op for ar/en).
+      if (!languages.isCore(lang)) {
+        await languages.ensureTtsLanguage(lang, TTS_LOCAL_URL);
+      }
+      const speechLocale = lang === "ar" ? "ar-EG" : (lang === "zh" ? "zh-CN" : "en-US");
+      const ttsText = processTextForSpeech(preprocessTextForElevenLabs(text), speechLocale);
+      if (LOG_TRANSCRIPTS) console.log(`[tts] lang=${lang} → local: ${ttsText.slice(0, 80)}`);
 
       const response = await fetch(`${TTS_LOCAL_URL.replace(/\/$/, "")}/synthesize`, {
         method: "POST",

@@ -62,7 +62,7 @@ curl localhost:3000/config     # which provider each layer resolved to (no secre
 ## Architecture
 
 ```
-Browser (public/client.html)
+Browser (src/client)
   mic → MediaRecorder + volume VAD
      ↓ POST /stt  (audio blob)
   Server → Groq Whisper → transcript
