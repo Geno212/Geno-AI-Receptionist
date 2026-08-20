@@ -41,9 +41,10 @@ async function main() {
   // ---------------------------------------------------------------- files
   section("Project files");
   const required = [
-    "server.js", "db.json", "package.json",
-    "lib/providers.js", "lib/system-prompt.js", "lib/languages.js",
-    "src/client/index.html", "src/client/js/app.js", "src/client/css/styles.css",
+    "server.js", "package.json",
+    "lib/providers.js", "lib/system-prompt.js", "lib/languages.js", "lib/db.js", "lib/supabase.js",
+    "app/page.tsx", "components/ReceptionistClient.tsx", "app/globals.css",
+    "utils/supabase/client.ts", "utils/supabase/server.ts", "middleware.ts",
   ];
   for (const f of required) {
     if (fs.existsSync(path.join(__dirname, "..", f))) ok(f);
@@ -54,15 +55,29 @@ async function main() {
   else fail("node_modules missing", "run: npm install");
 
   if (fs.existsSync(path.join(__dirname, "..", ".env"))) ok(".env");
-  else fail(".env missing", "run: cp .env.example .env   then fill in GROQ_API_KEY and ELEVENLABS_API_KEY");
+  else fail(".env missing", "run: cp .env.example .env   then fill in GROQ_API_KEY and Supabase keys");
 
-  // db.json must parse and carry the knowledge base.
-  try {
-    const db = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "db.json"), "utf8"));
-    if (db.company_info?.name) ok("db.json", `company_info: ${db.company_info.name}`);
-    else warn("db.json has no company_info.name", "the assistant will have no knowledge base");
-  } catch (e) {
-    fail(`db.json is not valid JSON: ${e.message}`, "restore it from git: git checkout db.json");
+  if (fs.existsSync(path.join(__dirname, "..", ".env.local"))) ok(".env.local");
+  else warn(".env.local missing", "Next.js reads NEXT_PUBLIC_SUPABASE_* from .env.local");
+
+  // Knowledge base: Supabase preferred; db.json is offline fallback only.
+  const hasSupabase = Boolean(
+    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
+  );
+  if (hasSupabase) {
+    ok("Supabase URL configured");
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY) ok("SUPABASE_SERVICE_ROLE_KEY");
+    else warn("SUPABASE_SERVICE_ROLE_KEY missing", "Express lead writes may fail under RLS — add service role key");
+  } else if (fs.existsSync(path.join(__dirname, "..", "db.json"))) {
+    try {
+      const db = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "db.json"), "utf8"));
+      if (db.company_info?.name) ok("db.json fallback", `company_info: ${db.company_info.name}`);
+      else warn("db.json has no company_info.name", "seed Supabase (db.sql) for the knowledge base");
+    } catch (e) {
+      fail(`db.json is not valid JSON: ${e.message}`, "restore it from git or seed Supabase");
+    }
+  } else {
+    warn("No Supabase URL and no db.json", "seed Supabase using db.sql");
   }
 
   // ---------------------------------------------------------------- modules

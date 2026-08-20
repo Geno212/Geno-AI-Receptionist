@@ -7,8 +7,7 @@
 // Legacy Twilio / Azure Speech / Google Cloud code lives in legacy/ and is not
 // loaded by this file.
 require("dotenv").config();
-const fs = require("fs");
-const path = require("path");
+require("dotenv").config({ path: ".env.local" });
 const express = require("express");
 const bodyParser = require("body-parser");
 const http = require("http");
@@ -18,9 +17,18 @@ const { callLLMWithFallback, transcribe, providerStatus } = require("./lib/provi
 // Single source of truth for the system prompt, shared with bench/.
 const { buildSystemPrompt } = require("./lib/system-prompt");
 const languages = require("./lib/languages");
+const {
+  getCompanyInfo,
+  upsertCustomer,
+  listMeetingsForMatch,
+  isConfigured: isSupabaseConfigured,
+} = require("./lib/db");
+const { classifyTranscript } = require("./lib/stt-filter");
+const { findMeetingInText, isMeetingIntent, isConfirmation } = require("./lib/meeting-match");
 
 // ========== ENV ==========
-const PORT = process.env.PORT || 3000;
+// Next.js owns :3000; this API/WS server defaults to :3001.
+const PORT = process.env.PORT || 3001;
 const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 
 // TTS: "elevenlabs" (paid, hosted) or "local" (self-hosted MIT model on a GPU).
@@ -40,17 +48,6 @@ const GREETING_ON_START = (process.env.GREETING_ON_START ?? "1") === "1";
 // Scope is Egyptian Arabic + English only; the greeting is bilingual so the
 // visitor's first reply establishes which language the conversation continues in.
 const GREETING_TEXT = process.env.GREETING_TEXT || "أهلاً بك في السويدي إليكتريك. أنا جينو. Welcome to El Sewedy Electric, I am Geno.";
-
-// ========== LIGHT DB (JSON file) ==========
-const dbPath = path.join(__dirname, "db.json");
-function loadDB() { 
-  if (!fs.existsSync(dbPath)) {
-    // Minimal init if missing
-    fs.writeFileSync(dbPath, JSON.stringify({ company_info: {}, customers: [], reservations: [], meetings: [], counters: { customers: 0, reservations: 0 } }, null, 2)); 
-  }
-  return JSON.parse(fs.readFileSync(dbPath, "utf8")); 
-}
-function saveDB(db) { fs.writeFileSync(dbPath, JSON.stringify(db, null, 2)); }
 
 function calculateLevenshtein(a, b) {
   const matrix = [];
@@ -192,18 +189,6 @@ function isSimilar(str1, str2, threshold = 0.6, label = null) {
 // Pending approvals: { requestId: { status: 'pending'|'approved'|'rejected', resolve: func, meeting: obj } }
 const pendingApprovals = new Map();
 
-function findOrCreateCustomer(db, { phone_e164, name }) {
-  let c = db.customers.find(x => x.phone_e164 === phone_e164);
-  if (!c) { db.counters.customers += 1; c = { id: db.counters.customers, phone_e164, name: name || "عميل", notes: "", created_at: Date.now() }; db.customers.push(c); }
-  return c;
-}
-function placeReservation(db, { phone_e164, name, party_size, reserved_at }) {
-  const c = findOrCreateCustomer(db, { phone_e164, name });
-  db.counters.reservations += 1;
-  const r = { id: db.counters.reservations, customer_id: c.id, party_size, reserved_at, status: "confirmed", source: "phone", created_at: Date.now() };
-  db.reservations.push(r); saveDB(db); return r;
-}
-
 // ========== LLM helper ==========
 // Delegates to lib/providers.js so the backend is an .env choice
 // (LLM_PROVIDER=groq|cerebras|gemini|openrouter|cloudflare) rather than code.
@@ -227,11 +212,7 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-const CLIENT_DIR = path.join(__dirname, "src", "client");
-app.use(express.static(CLIENT_DIR));
-app.get("/", (_req, res) => {
-  res.sendFile(path.join(CLIENT_DIR, "index.html"));
-});
+// UI is served by Next.js on :3000. This process is API + WebSocket only.
 
 app.get("/approve", (req, res) => {
   const id = req.query.id;
@@ -274,20 +255,54 @@ app.post(
         : mime.includes("wav") ? "wav"
         : "webm";
 
-      // Auto-detect by default. When a non-core language appears, enable it for
-      // both STT routing and TTS (server-side — no client language picker).
+      // Pin Whisper to ar|en when the UI dropdown selects a language (avoids
+      // multilingual silence hallucinations). "auto" keeps previous behaviour.
       const langParam = req.query.lang;
       const language = !langParam || langParam === "" || langParam === "auto"
         ? null
-        : langParam;
+        : String(langParam).toLowerCase().slice(0, 2);
 
-      const { text, model, language: detectedLang } = await transcribe(req.body, { filename: `speech.${ext}`, language });
+      const {
+        text,
+        model,
+        language: detectedLang,
+        noSpeechProb,
+        avgLogprob,
+      } = await transcribe(req.body, { filename: `speech.${ext}`, language });
       const latencyMs = Date.now() - started;
 
+      const effectiveLang = language || detectedLang;
+      const verdict = classifyTranscript(text, {
+        language: effectiveLang,
+        noSpeechProb,
+        avgLogprob,
+        pinnedLang: language,
+      });
+      if (verdict.spurious) {
+        if (LOG_TRANSCRIPTS) {
+          console.log(
+            `[stt] ignored hallucination (${latencyMs}ms, ${req.body.length}B${effectiveLang ? `, lang=${effectiveLang}` : ""}): "${text}" [${verdict.reason}]`
+          );
+        }
+        return res.json({
+          ok: true,
+          text: "",
+          ignored: true,
+          reason: verdict.reason,
+          model,
+          language: language || null,
+          newly_enabled: false,
+          enabled_languages: languages.listEnabled(),
+          latencyMs,
+        });
+      }
+
       let langInfo = null;
-      if (detectedLang) {
-        langInfo = languages.enableLanguage(detectedLang);
-        if (langInfo.ok && langInfo.newlyEnabled && TTS_PROVIDER === "local") {
+      // When the UI pins ar/en, do not enable random Whisper-detected languages (pt/uk/…).
+      const langToEnable = language || detectedLang;
+      if (langToEnable) {
+        langInfo = languages.enableLanguage(langToEnable);
+        if (langInfo.ok && langInfo.newlyEnabled && TTS_PROVIDER === "local" && !languages.isCore(langInfo.language)) {
           const ensured = await languages.ensureTtsLanguage(langInfo.language, TTS_LOCAL_URL);
           if (LOG_TRANSCRIPTS) {
             console.log(`[lang] enabled ${langInfo.language} for TTS/STT`, ensured.ok ? "ok" : ensured.error);
@@ -296,13 +311,13 @@ app.post(
       }
 
       if (LOG_TRANSCRIPTS) {
-        console.log(`[stt] ${latencyMs}ms (${req.body.length}B ${ext}${detectedLang ? `, lang=${detectedLang}` : ""}): ${text}`);
+        console.log(`[stt] ${latencyMs}ms (${req.body.length}B ${ext}${effectiveLang ? `, lang=${effectiveLang}` : ""}${language ? ", pinned" : ""}): ${text}`);
       }
       res.json({
         ok: true,
         text,
         model,
-        language: langInfo?.language || languages.normalizeLang(detectedLang) || null,
+        language: language || langInfo?.language || languages.normalizeLang(detectedLang) || null,
         newly_enabled: Boolean(langInfo?.newlyEnabled),
         enabled_languages: languages.listEnabled(),
         latencyMs,
@@ -401,38 +416,65 @@ wss.on("error", handleListenError);
 
 
 wss.on("connection", (ws, req) => {
-  const url = req.url;
-  console.log(`WS connected on ${url}`);
+  const rawUrl = req.url || "/";
+  console.log(`WS connected on ${rawUrl}`);
 
-  if (url === "/client-ws") {
-    handleBrowserConnection(ws);
-  // } else if (url === TWILIO_MEDIA_WS_PATH) {
-  //   handleTwilioConnection(ws);
+  const pathOnly = rawUrl.split("?")[0];
+  if (pathOnly === "/client-ws") {
+    let preferredLang = null;
+    try {
+      const u = new URL(rawUrl, "http://localhost");
+      const q = (u.searchParams.get("lang") || "").toLowerCase();
+      if (q === "ar" || q === "en") preferredLang = q;
+    } catch {}
+    handleBrowserConnection(ws, preferredLang).catch((e) => {
+      console.error("Browser WS handler failed:", e);
+      try { ws.close(); } catch {}
+    });
   } else {
     ws.close();
   }
 });
 
-function handleBrowserConnection(ws) {
-  const db = loadDB();
+async function handleBrowserConnection(ws, preferredLang = null) {
   const confirmedMeetings = new Set(); // Track confirmed meetings to prevent re-checking
-  
-  const info = db.company_info || {};
-  // System prompt now comes from lib/system-prompt.js -- the same module the
-  // benchmark scores, so bench and production can never drift apart.
-  //
-  // KB_MODE=lean (default) trims db.json's company_info from ~5,461 chars to
-  // ~2,100 by dropping embedded LinkedIn work histories from key_contacts.
-  // Measured 10/10 on the behavioural suite at 34% fewer tokens, which matters
-  // because the prompt is resent every turn against Groq's 12k tokens/minute cap.
-  const dynamicPrompt = buildSystemPrompt();
+
+  const info = await getCompanyInfo();
+  // System prompt from lib/system-prompt.js (same module the benchmark scores).
+  // KB comes from Supabase when configured; db.json remains an offline fallback.
+  const dynamicPrompt = buildSystemPrompt({ info });
 
   const convo = [ { role: "system", content: dynamicPrompt } ];
+
+  // Locked by UI dropdown when provided; otherwise set on first utterance.
+  let sessionReplyLang = preferredLang === "ar" || preferredLang === "en" ? preferredLang : null;
+  const languagePinned = Boolean(sessionReplyLang);
+
+  // Warm only the selected core voice when pinned (saves VRAM); else both.
+  if (TTS_PROVIDER === "local") {
+    if (sessionReplyLang === "ar") {
+      languages.ensureTtsLanguage("ar", TTS_LOCAL_URL).catch(() => {});
+    } else if (sessionReplyLang === "en") {
+      languages.ensureTtsLanguage("en", TTS_LOCAL_URL).catch(() => {});
+    } else {
+      languages.ensureTtsLanguage("ar", TTS_LOCAL_URL).catch(() => {});
+      languages.ensureTtsLanguage("en", TTS_LOCAL_URL).catch(() => {});
+    }
+  }
 
   // Handle text messages from browser / any WS client (language comes from /stt registry)
   ws.on("message", async (msg) => {
     try {
       const data = JSON.parse(msg.toString());
+      if (data.type === "set_language" && (data.language === "ar" || data.language === "en")) {
+        sessionReplyLang = data.language;
+        languages.enableLanguage(data.language);
+        if (TTS_PROVIDER === "local") {
+          await languages.ensureTtsLanguage(data.language, TTS_LOCAL_URL);
+        }
+        console.log(`[lang] session pinned to ${sessionReplyLang}`);
+        return;
+      }
       if (data.type === "text" && data.text) {
         // Half-duplex check: If AI is speaking, ignore incoming text to prevent self-reply/echo
         if (isSpeaking) {
@@ -440,15 +482,28 @@ function handleBrowserConnection(ws) {
             return;
         }
 
-        // Optional hint from client; /stt already enabled the language server-side.
-        if (data.language) {
-          const info = languages.enableLanguage(data.language);
-          if (info.ok && info.newlyEnabled && TTS_PROVIDER === "local") {
-            await languages.ensureTtsLanguage(info.language, TTS_LOCAL_URL);
+        if (data.language && (data.language === "ar" || data.language === "en")) {
+          languages.enableLanguage(data.language);
+          if (!languagePinned) {
+            const arChars = (data.text.match(/[\u0600-\u06FF]/g) || []).length;
+            const latinChars = (data.text.match(/[A-Za-z]/g) || []).length;
+            if (latinChars > arChars * 2) sessionReplyLang = "en";
+            else if (arChars > latinChars * 2) sessionReplyLang = "ar";
+            else sessionReplyLang = data.language;
+          } else {
+            sessionReplyLang = data.language === "ar" || data.language === "en"
+              ? data.language
+              : sessionReplyLang;
           }
         }
-        console.log("Browser STT:", data.text, `(lang=${languages.getLastDetected()})`);
-        await handleTurn(data.text);
+        if (!sessionReplyLang) {
+          sessionReplyLang = /[\u0600-\u06FF]/.test(data.text) ? "ar" : "en";
+        }
+        // When UI pinned a language, always force it for the turn.
+        if (languagePinned && preferredLang) sessionReplyLang = preferredLang;
+
+        console.log("Browser STT:", data.text, `(lang=${sessionReplyLang}, pinned=${languagePinned})`);
+        await handleTurn(data.text, sessionReplyLang);
       }
     } catch (e) {}
   });
@@ -458,15 +513,118 @@ function handleBrowserConnection(ws) {
   let currentCustomerId = null; // Track database ID of current customer for updates
   let waitingForApproval = false; // Track if we are currently waiting for approval
 
-  async function handleTurn(text) {
+  function isArSession(text, replyLang) {
+    if (replyLang === "ar") return true;
+    if (replyLang === "en") return false;
+    return /[\u0600-\u06FF]/.test(text || "");
+  }
+
+  async function beginMeetingApproval(bestMatch, visitor_name, host_name, isAr) {
+    const meetingKey = `${visitor_name}|${host_name}`;
+    if (waitingForApproval || confirmedMeetings.has(meetingKey)) {
+      return isAr
+        ? "لسه مستنيين رد على الميعاد. تحب تسأل عن حاجة تانية؟"
+        : "We're still waiting on confirmation. Anything else I can help with?";
+    }
+
+    const approvalId = Math.random().toString(36).substring(7);
+    const approvalLink = `${PUBLIC_URL}/approve?id=${approvalId}&action=approve`;
+    const rejectLink = `${PUBLIC_URL}/approve?id=${approvalId}&action=reject`;
+    console.log(`\n\n📢 [MOCK TEAMS NOTIFICATION] 📢\nTo: ${bestMatch.host_email}\nMessage: Visitor ${visitor_name} is here for ${bestMatch.host_name}.\n👉 APPROVE: ${approvalLink}\n👉 REJECT: ${rejectLink}\n\n`);
+
+    let status = "pending";
+    pendingApprovals.set(approvalId, { status, resolve: (s) => { status = s; } });
+    waitingForApproval = true;
+    lastCollectedInfo.visitor_name = visitor_name;
+    lastCollectedInfo.host_name = host_name;
+
+    const checkInterval = setInterval(async () => {
+      if (status === "pending") return;
+      clearInterval(checkInterval);
+      waitingForApproval = false;
+      let timeMsg = "";
+      if (bestMatch.time) {
+        const meetingTime = new Date();
+        const [hrs, mins] = bestMatch.time.split(":");
+        meetingTime.setHours(parseInt(hrs), parseInt(mins), 0, 0);
+        const diffMins = Math.round((meetingTime - new Date()) / 60000);
+        if (diffMins > 0) {
+          timeMsg = isAr
+            ? `ميعادك الساعة ${bestMatch.time}، يعني كمان ${diffMins} دقيقة.`
+            : `Your meeting is at ${bestMatch.time}, in about ${diffMins} minutes.`;
+        } else {
+          timeMsg = isAr
+            ? `ميعادك الساعة ${bestMatch.time}.`
+            : `Your meeting is at ${bestMatch.time}.`;
+        }
+      }
+      const notification = status === "approved"
+        ? (isAr
+          ? `أستاذ ${bestMatch.host_name} أكد الميعاد. تقدر تتفضل. ${timeMsg}`
+          : `Mr. ${bestMatch.host_name} confirmed. You may go ahead. ${timeMsg}`)
+        : (isAr
+          ? `للأسف أستاذ ${bestMatch.host_name} مش متاح دلوقتي.`
+          : `Unfortunately Mr. ${bestMatch.host_name} is unavailable right now.`);
+      if (status === "approved") confirmedMeetings.add(meetingKey);
+      await speak(notification);
+    }, 1000);
+
+    const suggestTopics = isAr
+      ? "منتجاتنا أو خدماتنا"
+      : (info.sectors ? info.sectors.slice(0, 2).join(", ") : "our products");
+    const detail = isAr
+      ? `لقيت ميعادك: ${bestMatch.visitor_name}${bestMatch.visitor_company ? ` من ${bestMatch.visitor_company}` : ""} مع أستاذ ${bestMatch.host_name}${bestMatch.department ? `، ${bestMatch.department}` : ""}${bestMatch.time ? ` الساعة ${bestMatch.time}` : ""}.`
+      : `Found it: ${bestMatch.visitor_name}${bestMatch.visitor_company ? ` from ${bestMatch.visitor_company}` : ""} with Mr. ${bestMatch.host_name}${bestMatch.department ? `, ${bestMatch.department}` : ""}${bestMatch.time ? ` at ${bestMatch.time}` : ""}.`;
+    return isAr
+      ? `${detail} بعتله رسالة وهيرد حالاً. عقبال ما يرد، تحب تعرف أكتر عن ${suggestTopics}؟`
+      : `${detail} I've notified him. While we wait, want to hear about ${suggestTopics}?`;
+  }
+
+  async function handleTurn(text, replyLang = sessionReplyLang) {
+    const isAr = isArSession(text, replyLang);
+
+    // --- Server-side meeting resolve (don't rely on LLM asking for 5 fields) ---
+    if (!waitingForApproval) {
+      const meetings = await listMeetingsForMatch();
+
+      if (lastCollectedInfo.partialMatchCandidate && isConfirmation(text)) {
+        const bestMatch = lastCollectedInfo.partialMatchCandidate;
+        lastCollectedInfo.partialMatchCandidate = null;
+        const reply = await beginMeetingApproval(
+          bestMatch,
+          bestMatch.visitor_name,
+          bestMatch.host_name,
+          isAr
+        );
+        convo.push({ role: "user", content: text });
+        convo.push({ role: "assistant", content: reply });
+        await speak(reply);
+        return;
+      }
+
+      const found = findMeetingInText(text, meetings, isSimilar);
+      if (found?.confidence === "high" && found.match) {
+        const bestMatch = found.match;
+        lastCollectedInfo.partialMatchCandidate = bestMatch;
+        const reply = isAr
+          ? `تمام، لقيت ميعاد: ${bestMatch.visitor_name}${bestMatch.visitor_company ? ` من ${bestMatch.visitor_company}` : ""} مع أستاذ ${bestMatch.host_name}${bestMatch.department ? `، ${bestMatch.department}` : ""}${bestMatch.time ? ` الساعة ${bestMatch.time}` : ""}. أأكدلك الميعاد؟`
+          : `Got it — I found ${bestMatch.visitor_name}${bestMatch.visitor_company ? ` from ${bestMatch.visitor_company}` : ""} with Mr. ${bestMatch.host_name}${bestMatch.department ? ` (${bestMatch.department})` : ""}${bestMatch.time ? ` at ${bestMatch.time}` : ""}. Shall I confirm with him?`;
+        convo.push({ role: "user", content: text });
+        convo.push({ role: "assistant", content: reply });
+        await speak(reply);
+        return;
+      }
+    }
+
     // Inject system state for waiting
     if (waitingForApproval) {
-      // Check if the last message was the user asking something else
-      // We do not want to block them, but we want to prevent the LLM from calling check_meeting again.
-      // We append a system instruction to the conversation history temporarily.
       convo.push({ role: "system", content: "STATUS UPDATE: The user is currently WAITING for meeting approval (do not call check_meeting again). 1. If the user asks a question (e.g. about company history, or Asser Emad), ANSWER IT immediately and directly. 2. Do NOT mention the meeting status again unless asked. 3. Do NOT call the check_meeting tool again." });
     }
-    
+
+    convo.push({
+      role: "system",
+      content: `REPLY_LANGUAGE=${replyLang === "ar" ? "ar" : "en"}. Meeting rule: never ask for department/قسم/host company — only visitor name + host name.`,
+    });
     convo.push({ role: "user", content: text });
     const llm = await callLLM(convo);
     console.log("LLM Raw Output:", llm); // Debug log
@@ -475,15 +633,28 @@ function handleBrowserConnection(ws) {
     let reply = (llm || "").replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
     
     if (!reply) {
-      // Smart fallback based on user's input language
-      if (/[\u0600-\u06FF]/.test(text)) {
-         reply = "عفوا، مسمعتش كويس. ممكن تقول تاني؟";
-      } else if (/[\u3040-\u309F]|[\u30A0-\u30FF]/.test(text)) {
-         reply = "申し訳ありません、よく聞き取れませんでした。もう一度お願いします。";
-      } else if (/[\u4E00-\u9FFF]/.test(text)) {
-         reply = "抱歉，我没听清楚。请您再说一遍好吗？";
+      reply = isAr
+         ? "عفوا، مسمعتش كويس. ممكن تقول تاني؟"
+         : "I apologize, I didn't catch that. Could you please repeat?";
+    }
+
+    // If the model still interrogates for department/company, override with DB lookup.
+    if (/قسم|فرقة|department|host company|شركة.*(الشخص|المضيف|اللي هتقابل)/i.test(reply) && isMeetingIntent(text)) {
+      const meetings = await listMeetingsForMatch();
+      const found = findMeetingInText(text, meetings, isSimilar)
+        || (lastCollectedInfo.partialMatchCandidate
+          ? { confidence: "high", match: lastCollectedInfo.partialMatchCandidate }
+          : null);
+      if (found?.match) {
+        lastCollectedInfo.partialMatchCandidate = found.match;
+        const bestMatch = found.match;
+        reply = isAr
+          ? `مش محتاجين القسم — لقيت الميعاد: ${bestMatch.visitor_name} مع أستاذ ${bestMatch.host_name}${bestMatch.time ? ` الساعة ${bestMatch.time}` : ""}. أأكدلك؟`
+          : `No need for the department — I found ${bestMatch.visitor_name} with Mr. ${bestMatch.host_name}${bestMatch.time ? ` at ${bestMatch.time}` : ""}. Shall I confirm?`;
       } else {
-         reply = "I apologize, I didn't catch that. Could you please repeat?";
+        reply = isAr
+          ? "محتاج اسمك واسم الشخص اللي هتقابله بس. قولّهم مرة كمان؟"
+          : "I only need your name and who you're meeting. Could you say those again?";
       }
     }
 
@@ -532,59 +703,21 @@ function handleBrowserConnection(ws) {
             } else {
                 // ... continue to DB logic ...
                 if (normPhone) {
-                   if (!db.customers) db.customers = [];
-                   
-                   let existing = null;
-                   if (currentCustomerId) {
-                      existing = db.customers.find(c => c.id === currentCustomerId);
-                   }
-                   if (!existing) {
-                      existing = db.customers.find(c => c.phone === normPhone);
-                   }
-                   
-                   let leadWasUpdated = false;
-  
-                   if (existing) {
-                     // Update existing - check for actual changes
-                     if (
-                          (name && existing.name !== name) ||
-                          (interest && existing.interest !== interest) ||
-                          (company && existing.company !== company) ||
-                          (normPhone && existing.phone !== normPhone)
-                     ) {
-                         // Update fields
-                         if (name) existing.name = name;
-                         if (interest) existing.interest = interest;
-                         if (company) existing.company = company;
-                         if (normPhone) existing.phone = normPhone;
-                         
-                         currentCustomerId = existing.id;
-                         saveDB(db);
-                         console.log("✅ Lead updated in DB:", existing);
-                         leadWasUpdated = true;
+                   try {
+                     const { customer, updated } = await upsertCustomer({
+                       name,
+                       phone: normPhone,
+                       company,
+                       interest,
+                     });
+                     currentCustomerId = customer.id;
+                     const leadWasUpdated = updated;
+                     if (updated) {
+                       console.log("✅ Lead saved:", customer);
                      } else {
-                         // No changes
-                         currentCustomerId = existing.id;
-                         console.log("ℹ️ Lead exists and no changes detected.");
+                       console.log("ℹ️ Lead exists and no changes detected.");
                      }
-                   } else {
-                     // Create new
-                     db.counters.customers = (db.counters.customers || 0) + 1;
-                     const lead = { 
-                       id: db.counters.customers, 
-                       name: name || "Client", 
-                       phone: normPhone, 
-                       company: company || "", 
-                       interest: interest || "", 
-                       created_at: Date.now() 
-                     };
-                     db.customers.push(lead);
-                     currentCustomerId = lead.id; // Set session ID
-                     saveDB(db);
-                     console.log("✅ New lead saved to DB:", lead);
-                     leadWasUpdated = true;
-                   }
-      
+
                    // Force confirmation message ONLY if we actually saved/updated something
                    // or if the user seems to be asking for confirmation.
                    // If user says "I am good" or switches topic to "meeting", we skip this.
@@ -597,10 +730,13 @@ function handleBrowserConnection(ws) {
                    if (leadWasUpdated && !isNegative && !isTopicSwitch) {
                        const isAr = /[\u0600-\u06FF]/.test(text) || /[\u0600-\u06FF]/.test(reply);
                        const savedMsg = isAr 
-                          ? ` (تم حفظ البيانات: الاسم ${name || existing?.name}، التليفون ${normPhone || existing?.phone}، الشركة ${company || existing?.company}. تحب تعدل حاجة؟)`
-                          : ` (I have saved: Name ${name || existing?.name}, Phone ${normPhone || existing?.phone}, Company ${company || existing?.company}. Would you like to change anything?)`;
+                          ? ` (تم حفظ البيانات: الاسم ${name || customer?.name}، التليفون ${normPhone || customer?.phone}، الشركة ${company || customer?.company}. تحب تعدل حاجة؟)`
+                          : ` (I have saved: Name ${name || customer?.name}, Phone ${normPhone || customer?.phone}, Company ${company || customer?.company}. Would you like to change anything?)`;
                        
                        reply = reply + savedMsg;
+                   }
+                   } catch (dbErr) {
+                     console.error("Lead save failed:", dbErr.message);
                    }
                 }
             }
@@ -621,33 +757,24 @@ function handleBrowserConnection(ws) {
               // Helper to check for invalid/placeholder strings
               const isInvalid = (str) => !str || str.trim().length < 2 || str.trim() === "?" || str.toLowerCase() === "unknown";
     
-              if (isInvalid(visitor_name) || isInvalid(host_name) || isInvalid(visitor_company) || isInvalid(host_company) || isInvalid(department)) {
-                 // Dynamic missing info prompt
+              // Only visitor name + host name are required. Company/dept come from the DB match.
+              if (isInvalid(visitor_name) || isInvalid(host_name)) {
                  let missing = [];
                  const isAr = /[\u0600-\u06FF]/.test(text) || /[\u0600-\u06FF]/.test(reply);
                  
                  if (isInvalid(visitor_name)) missing.push(isAr ? "اسمك" : "your name");
-                 if (isInvalid(visitor_company)) missing.push(isAr ? "اسم شركتك" : "your company name");
                  if (isInvalid(host_name)) missing.push(isAr ? "اسم الشخص اللي هتقابله" : "who you are meeting with");
-                 if (isInvalid(host_company)) missing.push(isAr ? "شركة المضيف" : "host company");
-                 if (isInvalid(department)) missing.push(isAr ? "القسم" : "department");
                  
-                 if (missing.length > 0) {
-                     const list = missing.join(isAr ? " و " : " and ");
-                     reply = isAr 
-                       ? `ممكن تقول لي ${list} عشان أقدر أساعدك؟`
-                       : `Could you please tell me ${list} to proceed?`;
-                 } else {
-                     reply = isAr 
-                       ? `ممكن بيانات الاجتماع كاملة عشان أقدر أساعدك؟` 
-                       : `Could you please provide full meeting details to proceed?`;
-                 }
+                 const list = missing.join(isAr ? " و " : " and ");
+                 reply = isAr 
+                   ? `ممكن تقول لي ${list} بس عشان أدور على الميعاد؟`
+                   : `Could you tell me ${list} so I can look up your meeting?`;
                  // Skip processing logic if data is missing
               } else {
                 console.log("🔍 Checking meeting:", { visitor_name, visitor_company, host_name, host_company, department });
                 
                 // Fuzzy match logic
-                const meetings = db.meetings || [];
+                const meetings = await listMeetingsForMatch();
                 
                 // Step 2: Normal Search (only if not already confirmed)
                 let bestMatch = null;
@@ -668,47 +795,28 @@ function handleBrowserConnection(ws) {
                    }
                 }
     
-                // 2. Normal Fuzzy Search (if not confirmed above)
+                // 2. Normal Fuzzy Search (if not confirmed above) — name + host are enough
                 if (!bestMatch) {
+                  const candidates = [];
                   for (const m of meetings) {
-                     // Visitor Name
-                     const vNameMatch = isSimilar(m.visitor_name, visitor_name, 0.6, "VName");
-                     
-                     // Visitor Company
-                     let vCompMatch = true;
-                     if (visitor_company && m.visitor_company) {
-                       vCompMatch = isSimilar(m.visitor_company, visitor_company, 0.5, "VComp");
+                     const vNameMatch = isSimilar(m.visitor_name, visitor_name, 0.55, "VName");
+                     const hNameMatch = isSimilar(m.host_name, host_name, 0.55, "HName");
+                     if (!vNameMatch || !hNameMatch) continue;
+
+                     let score = 2;
+                     if (visitor_company && m.visitor_company && isSimilar(m.visitor_company, visitor_company, 0.5, "VComp")) {
+                       score += 1;
                      }
-
-                     // Host Name Matching
-                     // Use isSimilar which includes Levenshtein + Cosine Hybrid logic
-                     const hNameMatch = isSimilar(m.host_name, host_name, 0.6, "HName");
-
-                     // Host Company
-                     let hCompMatch = true;
-                     if (host_company && m.host_company) {
-                        hCompMatch = isSimilar(m.host_company, host_company, 0.5, "HComp");
-                     }
-
-                     // Department
-                     let deptMatch = true;
-                     if (department && m.department) {
-                        deptMatch = isSimilar(m.department, department, 0.5, "Dept");
-                     }
-                 
-                 const lenRatio = host_name.length / m.host_name.length;
-                 
-                 // Debug log - hNameMatch uses the new hybrid logic!
-                 console.log(`Checking: ${m.visitor_name} vs ${visitor_name} (${vNameMatch}), ${m.host_name} vs ${host_name} (Match:${hNameMatch}), VComp:${vCompMatch}, HComp:${hCompMatch}, Dept:${deptMatch}`);
-
-                 if (vNameMatch && vCompMatch && hNameMatch && hCompMatch && deptMatch) {
-                   if (lenRatio < 0.6) {
-                      partialMatch = m;
-                   } else {
-                      bestMatch = m; 
-                      break;
-                   }
-                 }
+                     candidates.push({ m, score });
+                     console.log(`Checking: ${m.visitor_name} vs ${visitor_name}, ${m.host_name} vs ${host_name} (score=${score})`);
+                  }
+                  candidates.sort((a, b) => b.score - a.score);
+                  if (candidates.length === 1) {
+                    bestMatch = candidates[0].m;
+                  } else if (candidates.length > 1) {
+                    // Prefer higher score; if tied, ask confirmation on top candidate
+                    if (candidates[0].score > candidates[1].score) bestMatch = candidates[0].m;
+                    else partialMatch = candidates[0].m;
                   }
                 }
     
@@ -799,30 +907,29 @@ function handleBrowserConnection(ws) {
                 // The interval above handles the async approval.
     
                 } else if (partialMatch) {
-                   // Ambiguous case: User said "Sherif", DB has "Sherif El-Eskandarany"
-                   // Ask for confirmation
-                   reply = /[\u0600-\u06FF]/.test(reply) ? 
-                     `تقصد أستاذ ${partialMatch.host_name}؟` : 
-                     `Do you mean Mr. ${partialMatch.host_name}?`;
-                   
-                   // Update context so next turn uses confirmed candidate
+                   const isArP = /[\u0600-\u06FF]/.test(reply) || /[\u0600-\u06FF]/.test(text);
+                   reply = isArP
+                     ? `لقيت ميعاد محتمل: ${partialMatch.visitor_name} من ${partialMatch.visitor_company || "—"} مع أستاذ ${partialMatch.host_name}${partialMatch.department ? ` (قسم ${partialMatch.department})` : ""}${partialMatch.time ? ` الساعة ${partialMatch.time}` : ""}. ده صح؟`
+                     : `I found a possible meeting: ${partialMatch.visitor_name} from ${partialMatch.visitor_company || "—"} with Mr. ${partialMatch.host_name}${partialMatch.department ? ` (${partialMatch.department})` : ""}${partialMatch.time ? ` at ${partialMatch.time}` : ""}. Is that correct?`;
                    lastCollectedInfo.partialMatchCandidate = partialMatch; 
     
                 } else {
                    reply = /[\u0600-\u06FF]/.test(reply) ? 
-                     `للأسف مش لاقي حجز بالاسم ده. ممكن تتأكد من الاسم أو الشخص اللي هتقابله؟` : 
-                     `I couldn't find a meeting with those details. Could you please check the name or host again?`;
+                     `للأسف مش لاقي حجز بالاسم ده. ممكن تتأكد من اسمك واسم الشخص اللي هتقابله؟` : 
+                     `I couldn't find a meeting with those names. Could you check your name and who you're meeting?`;
                 }
     
-                // Prepend natural confirmation of details used for the search
+                // Confirm lookup using names (company optional)
                 const isAr = /[\u0600-\u06FF]/.test(text) || /[\u0600-\u06FF]/.test(reply);
-                const infoMsg = isAr 
-                  ? `تمام، ببحث عن حجز للزائر ${visitor_name} من شركة ${visitor_company} مع ${host_name}.`
-                  : `Okay, checking for a meeting for ${visitor_name} from ${visitor_company} with ${host_name}.`;
-                
-                // Only prepend if we found a match (or failed to find one), i.e. we are not just waiting
-                if (bestMatch || !bestMatch) {
-                   reply = infoMsg + " " + reply;
+                if (bestMatch) {
+                  const detailAr = `لقيت ميعادك: ${bestMatch.visitor_name}${bestMatch.visitor_company ? ` من ${bestMatch.visitor_company}` : ""} مع أستاذ ${bestMatch.host_name}${bestMatch.department ? `، قسم ${bestMatch.department}` : ""}${bestMatch.time ? ` الساعة ${bestMatch.time}` : ""}.`;
+                  const detailEn = `I found your meeting: ${bestMatch.visitor_name}${bestMatch.visitor_company ? ` from ${bestMatch.visitor_company}` : ""} with Mr. ${bestMatch.host_name}${bestMatch.department ? `, ${bestMatch.department}` : ""}${bestMatch.time ? ` at ${bestMatch.time}` : ""}.`;
+                  reply = (isAr ? detailAr : detailEn) + " " + reply;
+                } else if (!partialMatch) {
+                  const infoMsg = isAr 
+                    ? `بدور على ميعاد باسم ${visitor_name} مع ${host_name}.`
+                    : `Looking up a meeting for ${visitor_name} with ${host_name}.`;
+                  reply = infoMsg + " " + reply;
                 }
               }
           }
@@ -1029,6 +1136,7 @@ function handleBrowserConnection(ws) {
    * the client contract (PCM 24kHz / 16-bit / mono / LE, then {type:'tts_end'}).
    */
   function detectTtsLanguage(text) {
+    if (sessionReplyLang === "ar" || sessionReplyLang === "en") return sessionReplyLang;
     return languages.resolveTtsLanguage(text, languages.getLastDetected());
   }
 
@@ -1135,7 +1243,16 @@ function handleBrowserConnection(ws) {
   }
 
   // Initial greeting
-  if (GREETING_ON_START) speak(GREETING_TEXT);
+  const GREETING_AR = process.env.GREETING_TEXT_AR || "أهلاً بك في السويدي إليكتريك. أنا جينو، إزاي أقدر أساعدك؟";
+  const GREETING_EN = process.env.GREETING_TEXT_EN || "Welcome to El Sewedy Electric, I am Geno. How can I help you today?";
+  if (GREETING_ON_START) {
+    const greet = sessionReplyLang === "ar"
+      ? GREETING_AR
+      : sessionReplyLang === "en"
+        ? GREETING_EN
+        : GREETING_TEXT;
+    speak(greet);
+  }
 }
 
 
@@ -1160,7 +1277,9 @@ server.on("error", handleListenError);
 
 server.listen(PORT, () => {
   const s = providerStatus();
-  console.log(`Geno listening on http://localhost:${PORT}  (public: ${PUBLIC_URL})`);
+  console.log(`Geno API/WS on http://localhost:${PORT}  (public: ${PUBLIC_URL})`);
+  console.log(`  UI   http://localhost:3000 (Next.js)`);
+  console.log(`  DB   ${isSupabaseConfigured() ? "supabase" : "db.json fallback"}`);
   console.log(`  LLM  ${s.llm.provider} / ${s.llm.model}${s.llm.fallbacks.length ? ` (fallback: ${s.llm.fallbacks.join(", ")})` : ""}`);
   console.log(`  STT  ${s.stt.serverSide ? `${s.stt.provider} / ${s.stt.model}` : "browser Web Speech API"}`);
   console.log(`  TTS  ${s.tts.provider}`);
@@ -1168,4 +1287,3 @@ server.listen(PORT, () => {
   if (s.stt.serverSide && !s.stt.configured) console.warn(`  WARNING: STT has no credentials - run: npm run doctor`);
   if (!s.tts.configured) console.warn(`  WARNING: TTS has no credentials - run: npm run doctor`);
 });
-

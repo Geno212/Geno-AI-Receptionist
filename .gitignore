@@ -1,9 +1,11 @@
 node_modules/
 .env
-ai-receptionist-sa.json
+.env.local
+.ai-receptionist-sa.json
 *.log
 *.tmp
 .DS_Store
+.next/
 
 # Benchmark artifacts: reports and generated audio
 bench/out/

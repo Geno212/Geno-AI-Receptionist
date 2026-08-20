@@ -21,7 +21,7 @@
         radial-gradient(circle at 50% 0%, #1a0505 0%, transparent 60%),
         radial-gradient(circle at 85% 90%, #0f0202 0%, transparent 50%);
       color: var(--text-main);
-      font-family: 'Inter', sans-serif;
+      font-family: var(--font-inter), 'Inter', sans-serif;
       overflow: hidden; /* Prevent body scroll */
       display: flex;
       flex-direction: column;

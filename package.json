@@ -4,27 +4,48 @@
   "private": true,
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
+    "dev": "concurrently -k -n api,web -c yellow,cyan \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "cross-env PORT=3001 nodemon server.js",
+    "dev:web": "next dev -p 3000",
+    "build": "next build",
+    "start": "concurrently -k -n api,web -c yellow,cyan \"npm run start:api\" \"npm run start:web\"",
+    "start:api": "cross-env PORT=3001 node server.js",
+    "start:web": "next start -p 3000",
     "doctor": "node scripts/doctor.js",
     "doctor:quick": "node scripts/doctor.js --quick",
+    "seed": "node scripts/seed-supabase.js",
     "bench": "node bench/run-llm.js",
     "bench:prompt": "node bench/run-prompt-size.js",
     "bench:tts": "node bench/run-tts.js",
     "bench:stt": "node bench/run-stt.js"
   },
   "nodemonConfig": {
-    "watch": ["server.js", "lib", "src"],
-    "ext": "js,json,html,css"
+    "watch": [
+      "server.js",
+      "lib"
+    ],
+    "ext": "js,json"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.6.1",
+    "@supabase/supabase-js": "^2.49.8",
     "body-parser": "^1.20.2",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "next": "^15.3.3",
+    "pg": "^8.23.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "@types/node": "^22.15.21",
+    "@types/react": "^19.1.5",
+    "@types/react-dom": "^19.1.5",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "nodemon": "^3.1.4",
+    "typescript": "^5.8.3"
   },
   "description": "El Sewedy Electric AI Receptionist - Egyptian Arabic + English",
   "engines": {
